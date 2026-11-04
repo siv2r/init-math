@@ -1,0 +1,11 @@
+# Control (second Borel-Cantelli lemma under pairwise independence; a known result). The move a
+# reviewer may suspect, using only pairwise independence, is valid: the variance of a sum
+# involves only pairwise products. Chebyshev step: {N_n <= mu_n/2} is inside
+# {|N_n - mu_n| >= mu_n/2}. Monotonicity: N_n <= N gives {N <= M} inside {N_n <= M}; mu_n >= 2M
+# gives {N_n <= M} inside {N_n <= mu_n/2}. Edge cases: M = 0 handled by requiring mu_n > 0;
+# p_k in {0, 1} allowed (variance terms vanish). Checked line by line.
+kind = "control"
+error_class = ""
+location = ""
+catch = ""
+audited = "2026-10-28, Claude Fable 5.1: control; uncorrelated-variance step, Chebyshev with a = mu_n/2, the containments {N <= M} in {N_n <= M} in {N_n <= mu_n/2} and the M = 0 case re-derived; Durrett 1.6/2.2 statements checked"

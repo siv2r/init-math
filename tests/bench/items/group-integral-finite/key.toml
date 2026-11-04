@@ -1,0 +1,15 @@
+kind = "control"
+error_class = ""
+location = ""
+catch = ""
+audited = "2026-10-28, Claude Fable 5.1: control; binomial estimates for q != 3 (2k >= k+1) and q = 3 (2k+1, 3k >= k+2) re-derived; reduction to prime order and maximal k checked; Sage orders |GL_2(F_3)| = 48, |GL_3(F_3)| = 11232"
+# CORRECT (a classical result). Terse steps, each justified in the text:
+# - passing to A^(m/q) keeps A in the kernel and gives prime order q;
+# - k is well defined since A != I; B is not ≡ 0 mod 3 by maximality of k;
+# - q != 3: terms j >= 2 carry 3^(jk) with jk >= 2k >= k+1;
+# - q = 3: (I + 3^k B)^3 - I = 3^(k+1) B + 3^(2k+1) B^2 + 3^(3k) B^3, and 2k+1 >= k+2,
+#   3k >= k+2 for k >= 1.
+# The closing remark is true: for p = 2, (I + 2B)^2 - I = 4B + 4B^2 and the estimate needs
+# 2k >= k + 2, which fails at k = 1; -I = I + 2(-I) is in the kernel mod 2.
+# Sanity check (Sage): |GL_2(F_3)| = 48 (the largest finite subgroup of GL_2(Z) has order 12),
+# |GL_3(F_3)| = 11232, divisible by 48 (the order of the signed permutation matrices in GL_3(Z)).

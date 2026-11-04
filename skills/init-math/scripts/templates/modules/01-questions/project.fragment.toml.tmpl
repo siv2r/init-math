@@ -1,0 +1,21 @@
+[questions]
+# Where the research questions live (read by bin/question-check and bin/tie-check).
+dir = "wiki/questions"
+# bin/tie-check fails a task tied to a question that is not `active`. Set to false to let
+# work proceed on proposed questions too (the owner's call).
+tie_requires_active = true
+# bin/question-check warns while more questions than this are active: a reminder to ask
+# whether older ones are now parked or answered after a change of direction.
+warn_active_over = 1
+# The largest compute cap, in minutes, of a task of kind `explore` (an exploratory task with
+# no outcome map; docs/discipline/question-ties.md). bin/tie-check fails a larger cap.
+explore_cap_minutes = 10
+# Satellites: a question with `satellite_of: Q<nnn>` is a smaller, independently interesting
+# question around that one. While true, an open satellite of an active question is eligible
+# for work like the question itself (bin/question-check, bin/tie-check); the agent that
+# proposed it may work it without asking. Set to false to make satellites wait for
+# activation like any proposed question.
+satellites = {{questions.satellites}}
+# How many open satellites one question may have before bin/question-check warns; 0 means
+# no limit.
+satellites_max = {{questions.satellites_max}}

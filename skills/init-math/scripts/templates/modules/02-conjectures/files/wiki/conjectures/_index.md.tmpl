@@ -1,0 +1,53 @@
+# Conjecture ledger
+
+What this project currently believes, how strongly, and what to test next. One file per
+conjecture (`CNNN-slug.md`, format in [TEMPLATE.md](TEMPLATE.md)); this page is the list.
+Every conjecture serves at least one research question
+([../questions/_index.md](../questions/_index.md)). Reasoning behind the rules:
+[docs/discipline/conjecture-ledger.md](../../docs/discipline/conjecture-ledger.md).
+{{#if project.init_date}}
+
+Created: {{project.init_date}}
+{{/if}}
+
+## Rules
+
+- **State a conjecture as a connection between properties, on a named family**: "for the
+  objects in F, property A holds exactly when property B does". Use the `new-conjecture`
+  skill to add one.
+- **Status is not the backlog.** A `supported`, `proved` or `scope-tight` conjecture
+  usually still has next steps. Every next step is a line starting `@residue:` in the
+  file. Rebuild the real backlog with `bin/residues` (it reads all statuses), never by
+  reading the status column.
+- **A refuted conjecture is a result.** Keep its file and its row; record the
+  counterexample. Never delete a conjecture.
+- **`@priority` is {{owner}}'s lever.** An agent may suggest it in a report, and writes it
+  only when {{owner}} asks in the conversation, together with an `activated-by:` line.
+- A move to `weakly-supported`, `supported`, `scope-tight`, `proved` or `refuted` records
+  a finding: follow the `gate-chain` skill before committing it.
+- Anyone (the owner or an agent) adds conjectures and `@residue` lines.
+- Check links to questions with `bin/question-check`.
+
+## Status vocabulary
+
+| status | meaning |
+|---|---|
+| `open` | stated, no evidence yet |
+| `testing` | a check is gathering evidence now |
+| `weakly-supported` | passed a narrow check only (one sub-family, a small range, one mechanism); not safe to build on; the next step is to widen it |
+| `supported` | survived a broad check across the relevant variety of cases; believed, not proved |
+| `scope-tight` | holds within its stated scope, and widening the scope is known to break it |
+| `refuted` | a counterexample was found and recorded |
+| `proved` | settled by a proof (ours or the literature's, cited) |
+
+## Conjectures
+
+| id | statement | status | questions |
+|---|---|---|---|
+{{#each seeds.conjectures}}
+| [{{id}}]({{id}}-{{slug}}.md) | {{statement}} | open | {{#each questions}}{{.}}{{#if !@last}}, {{/if}}{{/each}} |
+{{/each}}
+{{#if !seeds.conjectures}}
+
+(No conjectures yet. Add the first with the `new-conjecture` skill.)
+{{/if}}

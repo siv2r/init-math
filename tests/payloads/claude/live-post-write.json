@@ -1,0 +1,26 @@
+{
+  "cwd": "/tmp/proj",
+  "duration_ms": 3,
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "permission_mode": "acceptEdits",
+  "prompt_id": "00000000-0000-0000-0000-000000000000",
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "tool_input": {
+    "content": "hello\n",
+    "file_path": "/tmp/proj/notes/x.md"
+  },
+  "tool_name": "Write",
+  "tool_response": {
+    "content": "hello\n",
+    "filePath": "/tmp/proj/notes/x.md",
+    "originalFile": null,
+    "structuredPatch": [],
+    "type": "create",
+    "userModified": false
+  },
+  "tool_use_id": "toolu_01H1M3R57LqCMzPj2LFGB4gE",
+  "transcript_path": "/home/user/.claude/projects/-tmp-proj/00000000-0000-0000-0000-000000000000.jsonl"
+}

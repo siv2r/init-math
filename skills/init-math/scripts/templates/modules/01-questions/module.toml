@@ -1,0 +1,19 @@
+id = "questions"
+number = 1
+title = "Research-question registry and question ties"
+group = "A"
+status = "included"
+order = 10
+summary = "A short list of one-sentence research questions the owner activates; every conjecture and every task states which question it moves, and how."
+
+allow_commands = ["bin/question-check", "bin/tie-check"]  # pre-approved: checks and records only
+
+[[hooks]]
+script = "hooks/tie-predispatch.py"
+event = "PreToolUse"
+actions = ["spawn"]
+
+[[per_item]]
+template = "question.md.tmpl"
+over = "seeds.questions"
+path = "wiki/questions/{id}-{slug}.md"

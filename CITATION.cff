@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If init-math helped your work, please cite it as below."
+type: software
+title: "init-math"
+abstract: "A skill and renderer that interviews a mathematician and sets up an AI-agent research project: question registry, conjecture ledger, review gates, experiment discipline and a reflection loop."
+authors:
+  - family-names: "Kohen"
+    given-names: "Nadav"
+repository-code: "https://github.com/nkohen/init-math"
+license: MIT
+version: "0.2.0"

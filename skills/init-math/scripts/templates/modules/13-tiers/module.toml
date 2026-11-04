@@ -1,0 +1,19 @@
+id = "tiers"
+number = 13
+title = "Model tiers and worker escalation"
+group = "D"
+status = "included"
+order = 130
+summary = "Strong models direct and review; cheaper workers execute whole units and hand back at mechanical stop triggers."
+depends = []
+
+[[hooks]]
+script = "hooks/agent-brief-lint.py"
+event = "PreToolUse"
+actions = ["spawn"]
+
+[[hooks]]
+script = "hooks/askquestion-fanout-nudge.py"
+event = "PreToolUse"
+actions = ["ask"]
+harnesses = ["claude"]

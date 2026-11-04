@@ -1,0 +1,194 @@
+# Firsthand checks
+
+Two habits: look for what is already known before building anything, and give every
+claim that will steer a decision or be written down one cheap check of your own first.
+Each rule: the rule, why, and when it does not apply.
+
+## Consult before constructing{{#if modules.attempts}} (principle: consult-before-constructing){{/if}}
+
+Before building a non-trivial method (an algorithm, a proof strategy, a search, a
+sampling scheme), look for an existing treatment. The search has two halves, and both are
+standing practice: neither needs permission.
+
+**Internal half.** Search the project's own record first:
+{{#if modules.conjectures}}
+the conjecture files in `wiki/conjectures/` (including their `@residue` lines, whatever
+their status),
+{{/if}}
+{{#if modules.questions}}
+every conjecture attached to the same research question (`bin/question-check --tsv`), not
+only the one you are working on, since a sibling has often settled the point already,
+{{/if}}
+{{#if modules.known_results}}
+the catalog of published results in `wiki/known-results/`,
+{{/if}}
+{{#if modules.experiments}}
+earlier experiments (`experiments/_index.md`),
+{{/if}}
+the notes and sources under `wiki/`, and `notes/`. Say what you found, or "nothing
+found", before you start.
+- Why: re-deriving the project's own result, and then reporting it as new, is the most
+  common waste, and the cheapest to prevent.
+- If a relevant source has been collected but not yet summarized, summarize it first;
+  do not experiment straight from unread material.
+
+**External half.**{{#if modules.attempts}} (principle: lit-search-before-claim){{/if}} Send a literature search to the `lit-search` agent whenever a finding is
+being characterized, a mechanism named, a conjecture promoted, or a claim reaches "is this
+already known?". Do it at the moment you are about to design a durable edit that rests on
+such a claim, not only at commit time. Scope the search to what the internal half did not
+cover; put a line starting `Internal prior art:` in the brief saying what that was.
+- Why: a few minutes of searching is cheap insurance against re-proving a known theorem
+  and against naming a mechanism after the wrong source.
+- **Before the first attempt on a hard target**, run the literature pass as its own dispatch,
+  and hand the attempting agent what it found as facts, conventions and named techniques
+  (the brief's `Known` line), not as "this is a famous open problem". When a result comes
+  back, ask whether it reuses a known construction or theorem without saying so: models
+  reproduce what they have read without attribution.
+- **When a structure emerges** in a computation or a proof (a closed form, a recurrence, an
+  algebraic or combinatorial pattern), ask what it is known as before building on it: list
+  candidate names, search under each, and check a fresh derivation for being a known
+  construction. A name, once found, brings the literature that goes with it.
+- Hooks: `lit-search-predispatch` {{#if harness.cap.spawn_brief_visible}}refuses the first search you dispatch in a
+  session, once, with a reminder of the internal half; the identical retry goes through{{else}}records each search (this harness hides the brief from
+  hooks, so the `lit-search` agent itself checks for the `Internal prior art:` line){{/if}}; `lit-search-gate` nudges a commit that adds a status
+  change or an attribution to a durable document when no search has been recorded since
+  the file was last committed (or in the past 24 hours, for a new file), whatever the
+  search was about.
+
+## One firsthand check per load-bearing claim
+
+A claim is load-bearing when it decides what work happens (build or reuse, continue or
+stop) or when it is about to enter a durable record (a commit, a ledger, a report, a
+handoff). Every such claim gets one cheap check of your own before it propagates, whoever
+made it. One check means one command, one probe or one read, not a research project.
+Routine exploration ("I didn't find it, I'll write the small lemma myself") is exempt: it
+decides nothing durable. A hedge such as "citation unverified" limits the damage of a
+wrong claim but does not remove the cost of correcting it later; prefer the check.
+
+**A citation is a reading, not a fact.** When a search agent (or anyone) says "this is
+Theorem 3.2 of X" or "this is a corollary of Y", that is its reading of a source.
+Placement claims ("this is open", "X studied this", "the best known bound is…") are lower
+risk; act on them, except when one would start or stop a line of work: then it is
+load-bearing and gets its one check (open the paper said to settle it, or the most recent
+paper or survey said to state it as open, and confirm). Before a theorem number or a derivation goes into a durable document,
+open the source and read the statement yourself, together with the source's definitions
+of its terms and any standing hypotheses of that section, or keep it in one draft, marked
+"citation unverified". When the source is out of reach (a textbook with no copy at hand),
+two independent restatements of the theorem with its hypotheses are a corroborated
+reading{{#if modules.known_results}} (`docs/discipline/known-results.md`){{/if}}; the citation stays the original source.
+If neither is to be had, list the citation for {{owner}} in your report ("Theorem X of Y,
+used in Z: can you check it?"): they may have the book.
+- Why: a wrong citation spreads to every document that copies it, and the classic error
+  is a correct theorem about a neighbouring object (a different family, a different
+  hypothesis, a different notion of the same word).
+
+**An absence claim needs a whole-library name search.** "The library has no X", "no module
+here provides X" all decide whether you build something.
+Before recording one, run one search over the whole tree by name, never by guessed
+location:
+{{#if modules.lean}}
+`bin/lib-find <name-regex>` for the proof library, and a project-wide `grep` for your
+own code.
+{{else}}
+search the library by declaration name across the whole tree, and `grep` the whole
+project for your own code.
+{{/if}}
+A search of the directory where you expected to find it is not a search.
+- Why: an over-pessimistic "it doesn't exist" kills a reuse as surely as a wrong citation
+  spreads an error, and the same name often lives somewhere unexpected.
+- Also for absences you derived yourself this session: a new instance you have not
+  checked against the standing hypotheses, a self-diagnosed "type-class problem" you have
+  not actually reproduced. A correct headline does not vouch for its details; check each
+  detail that carries weight.
+
+**A negative scope verdict needs the source read and one scout.** Before reporting that
+something is too hard, out of scope, a multi-week effort, or blocked on theory that does
+not exist, read the source's own statement and proof structure (not your paraphrase of
+the goal), and run one search of the libraries and literature for the missing piece.
+- Why: these verdicts stop work, and they are usually made from a paraphrase. The scout
+  you would run when work resumed costs the same now.
+- Not for: ordinary difficulty estimates that do not decide whether work happens.
+
+**The urge to estimate is the cue to scout.** When you feel "this is multi-week" or "this
+must be built from scratch", treat that as the signal to search (the library, the
+literature, a reduction attempt) before writing the estimate down.
+{{#if modules.scans}}
+`bin/scope-estimate-scan <doc>` lists the estimate phrases in a draft; for each, confirm
+you scouted before you wrote it.
+{{/if}}
+**An inherited estimate must be tagged.** When you copy a difficulty estimate from an
+older document into a new one, either cite the scout that produced it or tag it
+`[unverified, inherited from <doc> <date>]`.
+- Not for: dated progress logs that record what was believed at the time.
+
+**A claim about your own runtime needs one probe.** "I can't measure X", "I have no access
+to Y", "that tool isn't available" will shape the plan. Look first (list the directory,
+read the settings, run the command with `--help`).
+- Why: these claims are easy to make from habit and cheap to check.
+
+**Check the known-fragile step of an inherited result first.** When you inherit a result
+(from an agent, an earlier session, a draft) whose load-bearing step depends on something
+you already know fails in this setting, verify that step before writing the result into
+a durable document.
+- Why: verifying first costs one check; writing, then discovering, then rewriting every
+  copy costs a sweep.
+- Not for: generic caution. Only a failure mode you have actually seen.
+
+**Re-derive each algebraic crux yourself.** When a whole argument turns on one algebraic
+condition, or on two or three (which map exists, which decomposition holds, which inclusion
+is used), re-derive each by hand before building on it.
+{{#if modules.gates}}
+- Why: the proof referee re-derives at most three steps, of its own choosing, and only once
+  the document is written; by then everything has been built on the condition.
+{{else}}
+- Why: a referee sees only the finished document; by then everything has been built on the
+  condition.
+{{/if}}
+- Not for: the routine steps a referee already covers.
+
+## Briefing another agent
+
+**Verify a premise you hand to an agent.**{{#if modules.attempts}} (principle: verify-premise){{/if}} When a brief asserts a mathematical fact the
+agent will build on (a decomposition, an identity, a structural fact), check it yourself
+before dispatching.
+- Why: a cold agent builds faithfully on a wrong premise, and correcting it mid-run costs
+  more than the check.
+- Not for: a brief that asks the agent to discover the structure.
+
+**The exclusion list includes known trivialities and invariances.** When you send an agent
+to find something new, list not only what has failed but also the known symmetries,
+trivial cases and invariances of the object
+{{#if modules.conjectures}}
+(grep the conjecture files and their `@residue` lines for them)
+{{/if}}
+so it does not rediscover them and report them as new.
+{{#if modules.attempts}}
+The failures half comes from `bin/attempts --obstructions <target>`, one line per dead line,
+not from the failed transcripts: a restarted or parallel attempt gets the problem, the
+question's examples bank and that list.
+{{/if}}
+- Why: a fresh agent re-derives the obvious symmetry and calls it a result.
+
+## Transcribe a literature report before citing it
+
+A search agent's report exists only in the session. When a durable document cites it,
+copy the report, with its verification tags, to a committed `lit-report-<topic>.md` beside
+the citing document{{#if modules.experiments}} (in the experiment's directory when an experiment cites it){{/if}}, in the same commit that adds the citation.
+- Why: otherwise the citation points at nothing once the session ends.
+- The report's three tags are `[VERIFIED-FIRSTHAND]` (the exact statement was read in the
+  source and quoted), `[READING]` (an interpretation, or a theorem number not quoted exactly)
+  and `[PLACEMENT]` (an existence, openness or state-of-the-art claim).
+{{#if modules.known_results}}
+  In a `wiki/known-results/` file, `[VERIFIED-FIRSTHAND]` becomes `read: firsthand` and
+  `[READING]` goes under Seeds to verify until you read the theorem yourself (`read:
+  firsthand`), or two independent sources quote it exactly (`read: corroborated`).
+  A `[PLACEMENT]` claim is not a stated result: cite it in prose, with its tag, and do not
+  give it a known-results file.
+{{/if}}
+- Not for: scratch notes, which may refer to the session's report freely.
+
+## Say "done" only after doing it
+
+Do not tell the owner something was recorded, logged or added unless the write happened in
+this turn. The `durable-ack-guard` hook catches a final message that claims a write to a
+project record (by its id or file name) with no matching edit, and asks you to do it.

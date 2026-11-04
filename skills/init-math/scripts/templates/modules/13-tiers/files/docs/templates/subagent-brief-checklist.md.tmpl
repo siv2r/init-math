@@ -1,0 +1,54 @@
+# Checklist for any agent brief
+
+Paste the lines that apply into a brief before dispatching an agent. Each one prevents a
+failure that is easy to cause and slow to notice.
+
+## Always
+
+1. **Report, don't swallow, a refusal.** "If a command is blocked or a permission is
+   denied, stop and report it verbatim. Do not work around it silently."
+2. **Never background a job and return.**
+{{#if harness.cap.background_callback}}
+   "Do not run anything in the background and do not end your turn while a job runs: a
+   dispatched agent is not woken when a background job finishes, so the job is orphaned."
+{{else}}
+   "Do not detach any job: run commands in the foreground and wait for them to finish."
+{{/if}}
+   The working split: the agent validates on ONE seconds-scale known-answer case and
+   returns the exact command; the coordinator runs the long job. A timing probe over
+   several representative cases is also coordinator work. Put any caveat into the returned
+   command itself (the limits, the output path), not into prose beside it.
+3. **Deterministic per-item work is a script, not an agent.** If the same steps repeat
+   over many items, the agent writes the script; the script does the items.
+4. **A write task needs an agent that can write.** A read-only agent asked to write a file
+   produces nothing, often without saying so.
+5. **Prefer saved results to recomputation.** Name where earlier results live and say "look
+   there first".
+6. **Absolute paths** in every command, and a fresh timestamped scratch directory for
+   temporary files (so nothing needs a recursive delete afterwards).
+7. **Small out.** Ask for a headline, the evidence and the exact commands; not a transcript.
+8. **State the prior art.** Name what is already known, including known symmetries and
+   trivial cases of the object, so the agent does not rediscover them as findings.
+9. **Tier and return contract.** Say which tier runs it and that it ends with DONE,
+   PARTIAL or NEED-DIRECTION, plus a `CLAIM:` line on a proof or construction brick.
+10. **Brief a sub-goal, not a reputation.** Give the concrete statement and the known facts.
+   Keep difficulty adjectives ("famous", "open", "notoriously hard") out of the task; state
+   the problem's status only as a fact in the Known line ("no proof is recorded in the
+   sources searched on <date>"). A model told a problem is famously open may not really try.
+
+## When the agent is hunting for a pattern or relation
+
+- Seed it with the catalogue of relations already established, not only the failed ones.
+- Ask for results broken down by sub-family, not one pooled rate: a pooled rate hides the
+  sub-family where the pattern fails.
+- The coordinator, not the agent, decides which of its candidates are worth recording.
+
+## When the agent builds and validates a computation
+
+- "Smoke-test the exact command you return, on the smallest case, and show its output."
+- "Return ONE verdict. If two of your checks disagree, that is NEED-DIRECTION, not a
+  choice for you to make."
+{{#if modules.experiments}}
+- Follow the experiment workflow in `experiments/WORKFLOW.md` for where the driver and its
+  runs live.
+{{/if}}

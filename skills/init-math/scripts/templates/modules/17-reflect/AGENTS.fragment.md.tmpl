@@ -1,0 +1,14 @@
+## Reflection loop
+
+{{#if view.shared}}
+- **Log friction the turn you notice it** (a failed or repeated step, a wrong assumption, a misleading doc): `bin/journal --add friction "<one line>"`. A correction from {{owner}} about how you work: `--add feedback … --kind correction`.
+{{/if}}
+{{#if view.coordinator}}
+- **Run a reflection pass (the `reflect` skill) at a stopping point** when a nudge suggests it or friction has piled up; never mid-task, never as a worker.
+{{/if}}
+{{#if view.coordinator}}
+- **AUTO fixes are applied and committed (`chore(reflect auto):`); ASK fixes wait for {{owner}}'s yes**: AGENTS.md{{#if harness.coordinator_file}}, {{harness.coordinator_file}}{{/if}}, permissions, automatic or blocking behaviour, taste. Queue each with `bin/journal --propose` and put the pending ones (`bin/journal --pending`) to {{owner}} as a numbered list; a "continue" is not a yes.
+{{/if}}
+{{#if view.coordinator}}
+- Formats, ladder, routing: [docs/discipline/reflection-loop.md](docs/discipline/reflection-loop.md).
+{{/if}}

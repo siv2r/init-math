@@ -1,0 +1,21 @@
+id = "commit_gate"
+number = 8
+title = "Commit gate"
+group = "B"
+status = "included"
+order = 80
+summary = "A git pre-commit check refuses a commit that records a finding unless the required reviewers were sent the exact text being committed and their passing verdicts were stamped."
+depends = []
+
+allow_commands = ["bin/gate-stamp", "bin/setup-hooks"]  # pre-approved: checks and records only
+
+[[hooks]]
+script = "hooks/gate-dispatch-log.py"
+event = "PreToolUse"
+actions = ["spawn"]
+
+# Codex hides the brief from hooks; record from the reviewer's final reply instead.
+[[hooks]]
+script = "hooks/gate-dispatch-log.py"
+event = "SubagentStop"
+harnesses = ["codex"]

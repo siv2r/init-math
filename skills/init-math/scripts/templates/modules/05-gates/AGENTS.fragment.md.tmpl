@@ -1,0 +1,23 @@
+## Review gates
+
+{{#if view.coordinator}}
+- **The moment you record or report a finding, load the `gate-chain` skill.** A finding stated in a message counts.
+{{/if}}
+{{#if view.coordinator}}
+- Reviewers: `claim-auditor` (does it follow?), `proof-referee` (is the proof right?), `red-team` (is it true?). Fresh context, one path each.
+{{/if}}
+{{#if view.coordinator}}
+- Cheapest gate first, one at a time per document; apply each gate's fixes before the next.
+{{/if}}
+{{#if view.coordinator}}
+- Scale review to the claim, and limit it: one computed fact gets one recheck, an argued claim one claim-auditor pass, any gate three reviews.
+{{/if}}
+{{#if view.shared}}
+- An argument that convinces but is not a proof is an **argued claim**: labelled, evidence and never a result. Write it with [docs/templates/informal-argument.md](docs/templates/informal-argument.md).
+{{/if}}
+{{#if view.coordinator}}
+- Promotion{{#if modules.conjectures}} (e.g. to `supported`){{/if}}: claim-auditor `SOUND`, then red-team `SURVIVED`, then **propose**; {{owner}} promotes.
+{{/if}}
+{{#if view.coordinator}}
+- Why, and the claim-strength self-audit: [docs/discipline/gate-chain.md](docs/discipline/gate-chain.md).
+{{/if}}

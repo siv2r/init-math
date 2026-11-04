@@ -1,0 +1,10 @@
+# Control. The cyclic WLOG is valid: among (a,b,c), (b,c,a), (c,a,b) each entry occupies the
+# middle slot once, so some rotation puts a median value second; L and the constraint are
+# rotation-invariant. Identity L - b(a+c)^2 = c(b-a)(b-c) checked by expansion;
+# 4 - b(3-b)^2 = (1-b)^2(4-b) checked by expansion. Grid search (step 0.01) over the simplex:
+# max L = 4.0, attained at (1,1,1) and rotations of (2,1,0).
+kind = "control"
+error_class = ""
+location = ""
+catch = ""
+audited = "2026-10-28, Claude Fable 5.1: control; cyclic WLOG (median in slot 2) re-derived; both identities expanded symbolically; grid max 4.0 on the simplex; equality cases re-derived"

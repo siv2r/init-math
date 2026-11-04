@@ -1,0 +1,17 @@
+{
+  "cwd": "/tmp/proj",
+  "duration_ms": 321,
+  "error": "Exit code 1\nls: /nonexistent-probe-dir: No such file or directory",
+  "hook_event_name": "PostToolUseFailure",
+  "is_interrupt": false,
+  "permission_mode": "acceptEdits",
+  "prompt_id": "00000000-0000-0000-0000-000000000000",
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "tool_input": {
+    "command": "ls /nonexistent-probe-dir",
+    "description": "List a nonexistent directory"
+  },
+  "tool_name": "Bash",
+  "tool_use_id": "toolu_00000000000000000000000000",
+  "transcript_path": "/home/user/.claude/projects/proj/session.jsonl"
+}

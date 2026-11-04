@@ -1,0 +1,11 @@
+## Commit gate
+
+- **commit gate**: the git pre-commit check in `.githooks/pre-commit` that refuses a commit recording a finding until the required reviews are on file for the staged text.
+- **dispatch record**: a line in `.gates/dispatches.jsonl`, written automatically when a reviewer is dispatched, saying which reviewer was sent which file in which version.
+- **stamp**: a line in `.gates/stamps.jsonl`, written by `bin/gate-stamp`, recording a reviewer's verdict on one version of one file. Only a passing stamp satisfies the commit gate; the others are the review history.
+- **caveat phrase**: a phrase in a reviewer's report saying something is not established ("sketched", "not verified"); `bin/gate-stamp` refuses a passing stamp whose excerpt holds one unless `--caveat-ok` quotes the line and says why it does not apply.
+- **review cycle**: the stretch in which one reviewer's reviews of one file are counted against the re-review limit; `bin/gate-stamp --new-cycle` starts a new one.
+- **content hash (blob id)**: the identifier git gives a file's exact content; any edit changes it. Dispatch records and stamps are tied to it.
+- **stale stamp**: a stamp for an earlier version of a file. The file changed after the review, so the review no longer counts.
+- **staged text**: the version of a file that `git add` put in the index, which is what a commit records (it can differ from the file on disk).
+- **hooksPath**: the git setting naming the directory git runs hooks from; set per clone by `bin/setup-hooks`.

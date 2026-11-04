@@ -1,0 +1,18 @@
+## Research questions
+
+- **research question**: one sentence with an actual answer (a theorem, a formula, a classification, a decision procedure, or a clean "no") that the project does not have. One file per question in `wiki/questions/`, named `QNNN-slug.md`.
+- **answer shape**: one of the numbered lines (`A1.`, `A2.`, ...) in a question file: a concrete form the answer could take. Tasks name the answer shape they move, e.g. `Q002 / A1`.
+- **proposed**: a question's status when drafted. It generates no work.
+- **satellite**: a smaller, independently interesting question around an active one (`satellite_of: Q<nnn>`), whose answer would supply a tool or a case the main question needs. While `[questions] satellites = true`, an open satellite of an active question is eligible for work without activation.
+- **active**: a question's status once the owner has approved it (recorded in `activated-by:`). Only active questions generate work.
+- **parked**: a question that is still open but not being pursued.
+- **answered**: a question whose answer is recorded in its file.
+- **activated-by**: the frontmatter line filled with the owner's name when a question is made active, by the owner or by an agent the owner asked in the conversation. An empty value on an active question is an error.
+- **allocation order**: the order of the questions in `wiki/questions/_index.md`; earlier questions get more of the work, and every active question gets some in each working session unless the owner says otherwise. Set by the owner.
+- **question tie**: the `## Question tie` block in a task's brief: which answer shape the task moves (`question:`), through which conjecture (`via:`), of which kind (`kind:`), and what each outcome changes (`outcomes:`).
+- **tie kind**: one of `decides` (settles part of a conjecture on a named family), `narrows` (eliminates candidate answers), `mechanism` (tests a prediction of a proposed explanation), `instruments` (builds a tool a tied task needs), `transfer` (uses a result about one object in a step about another), `explore` (a capped exploratory computation with no outcome map).
+- **outcome map**: the `outcomes:` lines of a question tie, each `if <outcome> → <what changes in the answer>`. At least two, one of them the failure branch.
+- **bridge**: for a transfer, the line `if <result on A> then <step of B> because <mechanism>`. The mechanism must be something that could be false, not a shared topic.
+- **consumer**: for an instrument, the tied task (a conjecture's next step, or an experiment) that will use the tool.
+- **topic match** (`TOPIC-MATCH`): a claimed tie that holds only because two things are about the same objects. Not a tie.
+- **tie-auditor**: the reviewer agent that judges whether a question tie's outcomes really follow. Verdicts: TIED, WEAK/strength (real but over-claimed), WEAK/tie (in doubt, fixable once), TOPIC-MATCH. The owner may override it in conversation (an `override:` line in the block).

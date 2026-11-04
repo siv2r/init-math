@@ -1,0 +1,6 @@
+{
+  "name": "init-math",
+  "plugins": [
+    { "name": "init-math", "source": "./", "description": "Set up an AI-agent mathematics research project through an interview." }
+  ]
+}

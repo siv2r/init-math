@@ -1,0 +1,5 @@
+kind = "control"
+error_class = ""
+location = ""
+catch = ""
+audited = "2026-10-28, Claude Fable 5.1: control; recurrence from f E = 1, invertibility from f_d = 1, periodicity and the growing pentagonal gaps re-derived; E has coefficient 1 at q^1 so deg f >= 1; earlier: 2026-10-27 reviews, the deg f >= 1 gap fixed"

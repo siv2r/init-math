@@ -1,0 +1,8 @@
+## Usage statistics
+
+- **usage row**: one line of `logs/usage.jsonl`: for one transcript, model, agent role and UTC day, how many API responses (`calls`) and how many input, cache-read, cache-write, output and reasoning tokens a stretch of work used. Counts only, never text.
+- **main thread / subagent**: the conversation the owner talks to, versus an agent it dispatched; usage is split by this `role`, and subagents also by their agent type.
+- **cache read / cache write**: input tokens served from, or written to, the provider's prompt cache; usually priced differently from ordinary input, so they are counted apart.
+- **reasoning tokens**: hidden thinking tokens some models report (Codex); already included in the output count, never added to it.
+- **plan limits**: the share of a subscription's usage window already spent, as the harness reports it (Codex: a 5-hour and a weekly window); logged as a `limits` row when it changes.
+- **backfill**: `bin/usage-report --backfill`, which imports sessions the hook did not see from the harness's own transcript store, skipping what is already logged.

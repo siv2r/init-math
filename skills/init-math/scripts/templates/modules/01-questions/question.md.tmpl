@@ -1,0 +1,46 @@
+---
+id: {{item.id}}
+{{#if item.active}}
+status: active              # proposed | active | parked | answered
+activated-by: {{owner}}
+{{else}}
+status: proposed            # proposed | active | parked | answered
+activated-by:               # the owner's name, when the owner activates it
+{{/if}}
+---
+# {{item.id}}: {{item.sentence}}
+
+## Reading
+(Not stated yet: the other readings of this question and its conventions, then the intended
+reading and why. Ambiguity you cannot resolve goes to {{owner}}.)
+
+## Answer shapes
+{{#each item.answer_shapes}}
+A{{n}}. {{text}}
+{{/each}}
+
+## Why it matters
+{{#if item.why}}
+{{item.why}}
+{{else}}
+(Not stated yet: in at most three sentences, what an answer would decide or connect.)
+{{/if}}
+
+## What is known
+(Fill in: what the literature or this project already has, and why the answer is not quick.)
+
+## Examples
+Simplest: {{#if item.examples.simplest}}{{item.examples.simplest}}{{else}}(none yet){{/if}}
+Most structured: {{#if item.examples.structured}}{{item.examples.structured}}{{else}}(none yet){{/if}}
+Breakers: {{#if item.examples.breakers}}{{item.examples.breakers}}{{else}}(none yet; one line each: `- <example> — broke <claim id> (<date>)`){{/if}}
+Outside probes: {{#if item.examples.outside}}{{item.examples.outside}}{{else}}(none yet: examples deliberately outside the class studied){{/if}}
+
+## Ladder
+(Optional, for a question that climbs: its rungs from specific instances, to families, to the
+general class, one line each, with what is settled there. Record a tool under the rung where
+it arose; tools often appear only once the rung below is done, so do not list them in advance.)
+{{#if modules.attempts}}
+
+## Attempts
+`bin/attempts --target {{item.id}}`
+{{/if}}

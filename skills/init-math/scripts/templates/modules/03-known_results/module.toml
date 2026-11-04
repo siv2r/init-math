@@ -1,0 +1,7 @@
+id = "known_results"
+number = 3
+title = "Known-results catalog"
+group = "A"
+status = "included"
+order = 30
+summary = "What the literature already proves or observes, filed by object of study, with source, section and date accessed; it settles or suggests conjectures, and unsourced claims stay seeds to verify."

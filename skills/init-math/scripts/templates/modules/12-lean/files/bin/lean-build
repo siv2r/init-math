@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""lean-build: build the Lean project with checks that a bare `lake build` skips.
+
+    bin/lean-build [target ...]                 lake build, summarized
+    bin/lean-build --axioms Module decl ...     #print axioms for each declaration
+    bin/lean-build --dir DIR ...                use DIR instead of the detected project
+    bin/lean-build --log PATH ...               write the build log to PATH
+    bin/lean-build --selftest
+
+selftest: yes
+
+The Lake project is [stack].lake_path in project.toml, else the single lakefile under
+formal/. Before building it checks that the Lean version actually in use matches the
+project's `lean-toolchain` pin (exit 3 if not: a mismatched toolchain rebuilds the whole
+library or fails in confusing ways). The full build log goes to logs/state/lean-build.log;
+the screen gets the errors, the `sorry` warnings, a warning if the library itself is being
+recompiled (run `lake exe cache get`), and one line
+
+    HEALTH rc=<exit code> errors=<n> sorries=<n> library_rebuilt=<yes|no> log=<path>
+
+The exit code is lake's own (never masked by a pipe).
+
+--axioms writes a scratch file that imports Module and runs `#print axioms` on each
+declaration, then reports any axiom beyond the standard three (propext, Classical.choice,
+Quot.sound). `sorryAx` in the list means the proof is not finished.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+STANDARD = {"propext", "Classical.choice", "Quot.sound"}
+
+
+
+def _t(seconds: int) -> int:
+    """A selftest time limit, scaled by SELFTEST_TIMEOUT_SCALE on a slow machine."""
+    try:
+        return int(seconds * max(1.0, float(os.environ.get("SELFTEST_TIMEOUT_SCALE", "1"))))
+    except ValueError:
+        return seconds
+
+def lake_dir(root: Path, override: str | None) -> Path | None:
+    if override:
+        return Path(override).resolve()
+    cfg = {}
+    if (root / "project.toml").exists():
+        with open(root / "project.toml", "rb") as f:
+            cfg = tomllib.load(f).get("stack", {})
+    lp = str(cfg.get("lake_path") or "")
+    if lp:
+        return Path(lp) if Path(lp).is_absolute() else root / lp
+    cands = [p.parent for pat in ("formal/lakefile.*", "formal/*/lakefile.*") for p in root.glob(pat)]
+    return cands[0] if len(cands) == 1 else None
+
+
+def pinned_version(lake: Path) -> str | None:
+    f = lake / "lean-toolchain"
+    if not f.exists():
+        return None
+    pin = f.read_text().strip()
+    m = re.search(r"v?(\d+\.\d+\.\d+(?:-[\w.]+)?)\s*$", pin)
+    return m.group(1) if m else None
+
+
+def active_version(lake: Path) -> str | None:
+    try:
+        r = subprocess.run(["lean", "--version"], cwd=lake, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"version (\d+\.\d+\.\d+(?:-[\w.]+)?)", r.stdout + r.stderr)
+    return m.group(1) if m else None
+
+
+def summarize(log_text: str) -> dict:
+    lines = log_text.splitlines()
+    errors = [l for l in lines if re.search(r"(^|\s)error(:|\b)", l) and "warning" not in l.lower()[:20]]
+    sorries = [l for l in lines if "declaration uses 'sorry'" in l]
+    rebuilt = any(re.search(r"\bBuilt Mathlib\.|\bBuilding Mathlib\.|\bCompiling Mathlib\.", l) for l in lines)
+    return {"errors": errors, "sorries": sorries, "rebuilt": rebuilt}
+
+
+def build(lake: Path, targets: list[str], log: Path) -> int:
+    pin, act = pinned_version(lake), active_version(lake)
+    if act is None:
+        print("lean-build: `lean` was not found or did not report a version (is elan installed?)",
+              file=sys.stderr)
+        return 127
+    if pin and pin != act:
+        print(f"lean-build: toolchain mismatch: lean-toolchain pins {pin}, but `lean` is {act}. "
+              "Fix the toolchain before building.", file=sys.stderr)
+        return 3
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with open(log, "w", encoding="utf-8") as fh:
+        try:
+            r = subprocess.run(["lake", "build", *targets], cwd=lake, stdout=fh, stderr=subprocess.STDOUT)
+            rc = r.returncode
+        except OSError as e:
+            fh.write(f"could not run lake: {e}\n")
+            rc = 127
+    s = summarize(log.read_text(encoding="utf-8", errors="replace"))
+    for l in s["errors"][:40]:
+        print(l)
+    for l in s["sorries"][:40]:
+        print(l)
+    if s["rebuilt"]:
+        print("WARNING: the library itself was being compiled from source. Run `lake exe cache get` "
+              "in the Lean project first; a source build of the library takes hours.")
+    try:
+        shown = log.relative_to(ROOT)
+    except ValueError:
+        shown = log
+    print(f"HEALTH rc={rc} errors={len(s['errors'])} sorries={len(s['sorries'])} "
+          f"library_rebuilt={'yes' if s['rebuilt'] else 'no'} log={shown}")
+    return rc
+
+
+def axioms(lake: Path, module: str, decls: list[str]) -> int:
+    src = f"import {module}\n" + "".join(f"#print axioms {d}\n" for d in decls)
+    with tempfile.NamedTemporaryFile("w", suffix=".lean", dir=lake, prefix=".axioms-", delete=False) as f:
+        f.write(src)
+        path = Path(f.name)
+    try:
+        r = subprocess.run(["lake", "env", "lean", str(path)], cwd=lake, capture_output=True, text=True)
+    except OSError as e:
+        print(f"lean-build: could not run lake: {e}", file=sys.stderr)
+        return 127
+    finally:
+        path.unlink(missing_ok=True)
+    out = r.stdout + r.stderr
+    print(out.strip())
+    return check_axioms(out, r.returncode)
+
+
+def check_axioms(out: str, rc: int) -> int:
+    used = set()
+    for m in re.finditer(r"depends on axioms: \[([^\]]*)\]", out):
+        used |= {a.strip() for a in m.group(1).replace("\n", " ").split(",") if a.strip()}
+    extra = sorted(used - STANDARD)
+    if rc != 0:
+        print(f"AXIOMS: lean exited {rc}; see the output above")
+        return rc
+    if extra:
+        print(f"AXIOMS: NOT CLEAN, uses {', '.join(extra)}" + (" (sorryAx = unfinished proof)" if "sorryAx" in extra else ""))
+        return 1
+    print("AXIOMS: clean (at most propext, Classical.choice, Quot.sound)")
+    return 0
+
+
+def selftest() -> int:
+    checks = []
+    with tempfile.TemporaryDirectory(prefix="lean-build selftest ") as tmp:
+        tmp = Path(tmp)
+        lake = tmp / "Proj"
+        lake.mkdir()
+        (lake / "lean-toolchain").write_text("leanprover/lean4:v4.9.0\n")
+        fakebin = tmp / "fakebin"
+        fakebin.mkdir()
+        (fakebin / "lean").write_text('#!/bin/sh\necho "Lean (version $FAKE_LEAN_VERSION, arm64)"\n')
+        (fakebin / "lake").write_text(
+            "#!/bin/sh\n"
+            "echo '✔ [10/12] Built Mathlib.Algebra.Group.Basic'\n"
+            "echo \"warning: ./Proj/A.lean:3:8: declaration uses 'sorry'\"\n"
+            "echo 'error: ./Proj/B.lean:7:2: unsolved goals'\n"
+            "exit 1\n")
+        for p in fakebin.iterdir():
+            p.chmod(0o755)
+        env = {**os.environ, "PATH": f"{fakebin}{os.pathsep}{os.environ.get('PATH', '')}"}
+        me = [sys.executable, str(Path(__file__).resolve()), "--dir", str(lake), "--log", str(tmp / "b.log")]
+
+        r = subprocess.run(me, capture_output=True, text=True, env={**env, "FAKE_LEAN_VERSION": "4.9.0"}, timeout=_t(60))
+        checks.append(("lake's failing exit code is preserved", r.returncode == 1))
+        checks.append(("HEALTH line counts errors, sorries and a library rebuild",
+                       "HEALTH rc=1 errors=1 sorries=1 library_rebuilt=yes" in r.stdout))
+        r = subprocess.run(me, capture_output=True, text=True, env={**env, "FAKE_LEAN_VERSION": "4.10.0"}, timeout=_t(60))
+        checks.append(("a toolchain mismatch refuses with exit 3", r.returncode == 3 and "mismatch" in r.stderr))
+        checks.append(("pin parsing", pinned_version(lake) == "4.9.0"))
+        clean = "'Foo.bar' depends on axioms: [propext, Classical.choice, Quot.sound]"
+        dirty = "'Foo.baz' depends on axioms: [propext, sorryAx]"
+        checks.append(("standard axioms are clean", check_axioms(clean, 0) == 0))
+        checks.append(("sorryAx is flagged", check_axioms(dirty, 0) == 1))
+        empty = tmp / "empty"
+        empty.mkdir()
+        (empty / "project.toml").write_text('[stack]\nlake_path = ""\n')
+        checks.append(("no Lean project found is reported", lake_dir(empty, None) is None))
+    for n, ok in checks:
+        print(("PASS " if ok else "FAIL ") + n)
+    return 0 if all(ok for _, ok in checks) else 1
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["--selftest"]:
+        return selftest()
+    ap = argparse.ArgumentParser(prog="lean-build", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog=__doc__.split("\n\n", 1)[1])
+    ap.add_argument("targets", nargs="*", help="lake build targets (default: the default target)")
+    ap.add_argument("--axioms", nargs="+", metavar="ARG", help="Module decl [decl ...]")
+    ap.add_argument("--dir", help="the Lake project directory")
+    ap.add_argument("--log", help="build log path (default logs/state/lean-build.log)")
+    args = ap.parse_args(argv)
+    lake = lake_dir(ROOT, args.dir)
+    if lake is None or not lake.is_dir():
+        print("lean-build: no Lean project found. Create one as described in formal/README.md, "
+              "then set [stack].lake_path in project.toml.", file=sys.stderr)
+        return 2
+    if args.axioms:
+        if len(args.axioms) < 2:
+            ap.error("--axioms needs a module and at least one declaration")
+        return axioms(lake, args.axioms[0], args.axioms[1:])
+    log = Path(args.log) if args.log else ROOT / "logs" / "state" / "lean-build.log"
+    return build(lake, args.targets, log)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

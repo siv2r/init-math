@@ -1,0 +1,11 @@
+## Mechanical scans
+
+{{#if view.coordinator}}
+Seconds-cheap, run before a reviewer or a reader sees the text (all advisory unless noted):
+- Before the claim-auditor: `bin/hedge-scan <draft>` (headlines carry the body's hedges) and `bin/define-check <draft>`.
+- Before the proof-referee: `bin/math-hygiene-scan <doc>` (includes this field's `[hygiene]` rules).
+- After a fix that changed a claim: `bin/stale-status-scan --phrase "<old>" <files>`.
+- Before committing a handoff or plan: `bin/scope-estimate-scan <doc>`.
+- Before committing: `bin/link-check`, `bin/orphan-check`, `bin/backlink-check` (these exit 1 on a problem; each takes `--help`).
+- What each catches: [docs/discipline/scans.md](docs/discipline/scans.md).
+{{/if}}

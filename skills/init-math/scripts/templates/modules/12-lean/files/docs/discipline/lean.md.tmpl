@@ -1,0 +1,107 @@
+# Lean formalization
+
+Rules for turning a statement into a machine-checked proof. Setup and layout are in
+[../../formal/README.md](../../formal/README.md). Each rule: the rule, why, and when it does
+not apply.
+
+## What "done" means
+
+**Done = no `sorry` and axiom-clean.** A top-level result is finished only when the build
+shows no `sorry` for it and `bin/lean-build --axioms <Module> <name>` reports at most
+`propext`, `Classical.choice` and `Quot.sound`. Run that check on every new top-level result
+before recording it as proved anywhere.
+- Why: a `sorry` hidden in a dependency, or an `axiom` added as a shortcut, makes the
+  result unproved however clean its own file looks. `#print axioms` sees the whole chain.
+- Not for: scaffolding in progress; a `sorry` is fine while you work, just never in a
+  result you report as done.
+- `native_decide` is not axiom-clean (it adds `Lean.ofReduceBool`). Do not use it in a result
+  marked done; use `decide`, or record an explicit exception the owner approved: a line
+  `extra axiom: Lean.ofReduceBool, approved by <owner> <date>` in the README of the
+  result's work folder{{#if modules.conjectures}} (and in its conjecture file, if it has one){{/if}}. The axiom check then reports
+  `AXIOMS: NOT CLEAN, uses Lean.ofReduceBool` for that result; that is expected, and any
+  other axiom in the list is not.
+
+**The target is the statement you were asked to prove.** A proof of a stronger or more
+general statement counts only when the step from it to the target is itself formalized.
+Use general results freely to simplify the proof of the target; do not offer one as a
+substitute for it.
+- Why: the unformalized bridge ("this clearly implies the target") is exactly where a
+  wrong inclusion or a missing hypothesis hides.
+- Not for: when the stronger statement is itself the agreed goal.
+
+## Check the statement before you build on it
+
+**Compare the formal statement with the claim, line by line.** Before a proof counts, write
+the formal statement's hypotheses and quantifiers beside the informal claim's, one line
+each, in the work folder, and give that comparison to the `claim-auditor`.
+- Why: a machine-checked proof of a weaker or different statement is checked, not right.
+  Formalizations have proved the real-valued case when the complex one was meant, and weaker
+  statements than the papers they came with claimed.
+
+**Test every new definition on one case it must accept and one it must reject.** Before
+proving anything about a definition, evaluate or prove it on a known positive instance and
+a known negative instance. Check that a lemma's hypotheses can be satisfied at all.
+- Why: a subtly wrong definition, or a hypothesis that can never hold, makes false goals
+  provable; everything built on it is worthless and looks fine.
+- Alarm: a run of suspiciously easy successes (several `sorry`s closing at once, a hard
+  lemma group landing in minutes) is a sign the statement is wrong, not a win. Stop and
+  run the positive/negative test before building further.
+
+**Never write a library lemma name from memory.** Before the first build, look up every
+lemma you intend to use, with its exact name, argument order and instance requirements:
+`bin/lib-find <name-regex>` (declaration names, whole tree), or your editor's or language
+server's search. The pattern is a regular expression (Python syntax), searched anywhere in the
+declaration name, so a bare substring works. Example: `bin/lib-find 'two_le$'`.
+If Mathlib is not fetched yet, it says so; a no-match is then not evidence of absence.
+- Why: a guessed name costs a full build cycle to discover it does not exist, and a near
+  miss with different hypotheses costs more.
+
+**An absence claim needs a whole-tree name search.** Before you write that the library
+lacks something, or decide to build it yourself, run `bin/lib-find` on the name (try the
+last name component and close variants; names are matched without their namespace). Report
+the pattern and the directories searched.
+- Why: the same concept often lives where you would not guess, under a slightly different
+  name; "not in the library" decides whether days of work happen.
+
+## When stuck
+
+**Two failed build rounds on the same instance or coercion problem: stop.** If two
+rounds of edits and builds have not fixed an instance-synthesis failure or a coercion
+mismatch (an instance diamond), revert to the last good state and log a blocker with the
+exact error. Do not keep guessing.
+- Why: these errors rarely yield to trial and error, and every guess costs a build.
+  Showing the two instance terms explicitly (pass the instances by position) turns a guess
+  into a diagnosis.
+
+**Reduce before reporting blocked.** When the remaining step is genuinely hard, state it
+as an explicit hypothesis (a named premise of the theorem) and prove everything around it
+with no `sorry`. Then the blocker is one precise statement. Check that the named premise
+can hold together with the other hypotheses (exhibit one instance, or argue it in a line);
+a premise that never holds makes the reduction empty.
+- Why: the surrounding glue is usually most of the work, and the hard core often turns
+  out smaller than it looked once isolated.
+- Not for: when no well-typed premise captures the core. Decide that after one attempt to
+  write the reduction, not before.
+
+## Building
+
+**Use `bin/lean-build`, not a bare `lake build`.** It checks the toolchain pin, keeps the
+real exit code, summarizes errors and `sorry` warnings, and warns when the library itself
+is being recompiled (then run `lake exe cache get`). A hook nudges a bare `lake build`.
+
+{{#if harness.cap.background_callback}}
+**The coordinator runs long builds; workers do not.** A full build can outlast the shell
+tool's foreground window, so the harness moves it to the background and notifies the
+session that started it. A worker cannot receive that notice: its turn ends and the build
+is orphaned. Workers check their edits with diagnostics on the edited file (from the Lean language server) and return; the coordinator runs the confirming `bin/lean-build` and the axiom check.
+{{else}}
+**The coordinator runs the confirming build.** Workers check their edits with diagnostics on
+the edited file (from the Lean language server) and return; the coordinator runs the full `bin/lean-build`
+in the foreground, waits for it, and runs the axiom check.
+{{/if}}
+
+**Line length: trust the linter.** If the project enables Mathlib's style linter, fix the
+long lines it reports rather than counting by hand. It counts characters, not bytes or
+display columns.
+- Why: with Unicode notation, hand counts of characters, columns and bytes disagree.
+- Not for: a project that does not enable that linter.

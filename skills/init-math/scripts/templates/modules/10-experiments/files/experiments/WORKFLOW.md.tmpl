@@ -1,0 +1,67 @@
+# Experiment workflow
+
+Three phases with one seam between them: build and smoke, archive the run, analyze it cold.
+The reasons for each step are in
+[../docs/discipline/experiment-doctrine.md](../docs/discipline/experiment-doctrine.md).
+
+## 0. Set up (before any code)
+
+1. `experiments/<slug>/`: copy `experiments/TEMPLATE/` (README, driver, run.toml). Use a
+   short descriptive slug, e.g. `goldbach-small-range` or `cubic-graph-girth`.
+2. Fill the README's **Prior art** section first: what is already known and where.
+{{#if modules.questions}}
+3. Fill the **Question tie**: which research question and answer shape this run moves, and
+   what each outcome would change. `bin/exp-run` refuses a `--full`/`--deep` run whose tie
+   fails `bin/tie-check`.
+{{/if}}
+{{#if modules.questions}}4{{else}}3{{/if}}. Fill Goal and Method: the claim tested, the family and parameter ranges, the hard
+   corners, the known-answer case, the coverage floor.
+{{#if modules.questions}}5{{else}}4{{/if}}. Add a row to [_index.md](_index.md).
+
+## 1. Build and smoke (seconds)
+
+1. Write the driver to the contract in `TEMPLATE/driver.py`: read `EXP_TIER` and
+   `EXP_OUT`, write `result.json` with `verdict`, `params`, `known_answer_check`.
+2. `bin/exp-run <slug> --smoke` until the smoke passes and the known-answer check is
+   `pass`. Fix the driver from the smoke output; that is the one place the builder reads
+   its own results.
+{{#if harness.cap.subagents}}
+3. This phase can go to an `exp-worker` agent with a fixed design. It builds, smokes, and
+   returns the exact `--full` command; it does not run the full sweep.
+{{/if}}
+
+## 2. Archive the run
+
+1. `bin/exp-run <slug> --full` (or `--deep`, opt-in, after `--full` has shown the larger
+   run is worth its cost). Each run gets its own bundle under `runs/<timestamp>/`; nothing
+   is overwritten.
+{{#if harness.cap.background_callback}}
+2. A run longer than about two minutes: start it as a tracked background job and wait
+   for its completion notice before reading the bundle. The coordinator owns this wait;
+   a worker agent cannot receive the notice.
+{{else}}
+2. A run longer than about two minutes: run it in the foreground and wait for it to
+   finish; report its result rather than leaving it running unattended.
+{{/if}}
+3. If the watchdog trips a limit (TIMEOUT, EXPLODED-mem, INTERRUPTED): follow the
+   response in [the doctrine](../docs/discipline/experiment-doctrine.md#guarded-runs).
+4. Commit the driver and the bundle.
+
+## 3. Analyze cold
+
+1. `bin/exp-pending` lists bundles with no `analysis.md`.
+2. In a fresh session, read the bundle (`manifest.json`, `result.json`, `output.txt`) and
+   write `runs/<timestamp>/analysis.md`: what the run shows, at what scope, what it does not
+   cover (capped or dropped cases), and the next cheapest step. Its existence marks the
+   bundle analyzed.
+3. Record the outcome where it belongs:
+{{#if modules.conjectures}}
+   - the conjecture's Evidence section (and a status change, if warranted, after review);
+{{/if}}
+{{#if modules.cache}}
+   - reusable computed values in `results-catalog.tsv` in the experiment directory, read
+     by `bin/cache lookup`;
+{{/if}}
+   - the experiment's README (Runs and Findings) and its row in `_index.md`.
+4. A finding that will be recorded as evidence goes through the review agents first
+   (`claim-auditor` for scope, then `red-team` for truth).

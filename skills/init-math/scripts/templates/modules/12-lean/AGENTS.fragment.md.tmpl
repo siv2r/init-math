@@ -1,0 +1,10 @@
+## Lean
+
+{{#if view.shared}}
+- A result is done only with no `sorry` and a clean `bin/lean-build --axioms <Module> <name>` (e.g. `--axioms Foo.Bar my_theorem`).
+- Look up every library name with `bin/lib-find`; never write one from memory. Same before claiming the library lacks something.
+- Test a new definition on one case it must accept and one it must reject. Easy wins in a row mean: suspect the statement.
+- Build with `bin/lean-build`, not a bare `lake build`. Two failed rounds on an instance problem: revert and log a blocker.
+
+Rules: [docs/discipline/lean.md](docs/discipline/lean.md).
+{{/if}}

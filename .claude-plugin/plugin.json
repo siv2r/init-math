@@ -1,0 +1,7 @@
+{
+  "name": "init-math",
+  "version": "0.2.0",
+  "description": "Interview a mathematician and set up an AI-agent research project: question registry, conjecture ledger, review gates, experiment seam, reflection loop.",
+  "author": { "name": "Nadav Kohen" },
+  "skills": "./skills/"
+}

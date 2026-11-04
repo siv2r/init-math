@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""bg-run: launch a long command with start/end markers, a heartbeat, and an on-disk record.
+
+    bin/bg-run [--runs DIR [--detach]] [--tick S] [--stall S] [--kill-on-stall] -- CMD [ARGS...]
+    bin/bg-run --status RUN_DIR
+
+Prints a START line, runs CMD under bin/heartbeat (a progress line every TICK seconds,
+a STALL warning after STALL quiet seconds), then an END line with the exit code and the
+elapsed time, and exits with CMD's exit code. The END line reminds you that an exit code
+is not the deliverable: check the output itself.
+
+With --runs DIR, the run is also recorded in a fresh directory DIR/<UTC timestamp>/:
+command.txt, pid, output.log, and exit_code (written when the command ends). A later
+session can then ask `bin/bg-run --status DIR/<ts>`: finished (exit 0 or 1), still
+running (exit 3), or died without an exit code (exit 4; killed, or the session ended).
+
+With --detach (needs --runs), the job runs in its own session, apart from the caller, so it
+survives the end of the agent's session. bg-run prints the run directory and returns at
+once; the output goes to output.log only, and --status is how anyone learns the outcome.
+selftest: yes
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def new_run_dir(runs: Path) -> Path:
+    runs.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    for n in range(1000):
+        d = runs / (stamp if n == 0 else f"{stamp}-{n}")
+        try:
+            d.mkdir()
+            return d
+        except FileExistsError:
+            continue
+    raise SystemExit("bg-run: could not create a unique run directory")
+
+
+def status(run_dir: Path) -> int:
+    if not run_dir.is_dir():
+        print(f"bg-run: no such run directory: {run_dir}", file=sys.stderr)
+        return 2
+    last = ""
+    out = run_dir / "output.log"
+    if out.exists():
+        lines = [x for x in out.read_text(encoding="utf-8", errors="replace").splitlines() if x.strip()]
+        last = lines[-1][:160] if lines else ""
+    ec = run_dir / "exit_code"
+    if ec.exists():
+        rc = int(ec.read_text().strip() or "1")
+        print(f"finished exit={rc}  last output: {last}")
+        return 0 if rc == 0 else 1
+    pid = int((run_dir / "pid").read_text().strip()) if (run_dir / "pid").exists() else 0
+    if pid and _alive(pid):
+        print(f"running pid={pid}  last output: {last}")
+        return 3
+    print(f"DIED without an exit code (killed, or the session ended)  last output: {last}")
+    return 4
+
+
+def detach(cmd: list[str], runs: str, hb_args: list[str]) -> int:
+    run_dir = new_run_dir(Path(runs))
+    argv = [sys.executable, os.path.abspath(__file__), "--into", str(run_dir), *hb_args, "--", *cmd]
+    kw: dict = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL, "close_fds": True}
+    if os.name == "nt":
+        kw["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kw["start_new_session"] = True
+    child = subprocess.Popen(argv, **kw)
+    (run_dir / "pid").write_text(f"{child.pid}\n")
+    (run_dir / "command.txt").write_text(shlex.join(cmd) + "\n")
+    print(f"[bg-run] DETACHED {time.strftime('%Y-%m-%dT%H:%M:%S')}  {shlex.join(cmd)}  "
+          f"record: {run_dir}\n[bg-run] It survives this session. Check it with "
+          f"`bin/bg-run --status {run_dir}` or `bin/wait-until-done --run {run_dir}`.", flush=True)
+    return 0
+
+
+def launch(cmd: list[str], runs: str | None, hb_args: list[str], into: str | None = None) -> int:
+    hb = [sys.executable, str(HERE / "heartbeat"), *hb_args]
+    run_dir = None
+    if into:
+        run_dir = Path(into)
+        (run_dir / "command.txt").write_text(shlex.join(cmd) + "\n")
+        (run_dir / "pid").write_text(f"{os.getpid()}\n")
+        hb += ["--log", str(run_dir / "output.log")]
+    elif runs:
+        run_dir = new_run_dir(Path(runs))
+        (run_dir / "command.txt").write_text(shlex.join(cmd) + "\n")
+        (run_dir / "pid").write_text(f"{os.getpid()}\n")
+        hb += ["--log", str(run_dir / "output.log")]
+    start = time.monotonic()
+    print(f"[bg-run] START {time.strftime('%Y-%m-%dT%H:%M:%S')}  {shlex.join(cmd)}"
+          + (f"  record: {run_dir}" if run_dir else ""), flush=True)
+    rc = subprocess.call([*hb, "--", *cmd])
+    el = int(time.monotonic() - start)
+    if run_dir:
+        (run_dir / "exit_code").write_text(f"{rc}\n")
+    print(f"[bg-run] END exit={rc} elapsed={el // 60}m{el % 60:02d}s. An exit code is not the "
+          f"deliverable: check the output itself (the file exists, its size, a known-answer row).",
+          flush=True)
+    return rc
+
+
+def selftest() -> int:
+    py, me = sys.executable, os.path.abspath(__file__)
+    with tempfile.TemporaryDirectory() as d:
+        r = subprocess.run([py, me, "--runs", d, "--tick", "5", "--", py, "-c", "print('hello')"],
+                           capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, r.stderr
+        assert "[bg-run] START" in r.stdout and "END exit=0" in r.stdout, r.stdout
+        runs = sorted(Path(d).iterdir())
+        assert len(runs) == 1, runs
+        rd = runs[0]
+        assert (rd / "exit_code").read_text().strip() == "0"
+        assert "hello" in (rd / "output.log").read_text()
+        assert subprocess.run([py, me, "--status", str(rd)], capture_output=True).returncode == 0
+        r = subprocess.run([py, me, "--runs", d, "--", py, "-c", "import sys; sys.exit(3)"],
+                           capture_output=True, text=True, timeout=30)
+        assert r.returncode == 3, ("exit code not propagated", r.returncode)
+        dead = Path(d) / "dead"
+        dead.mkdir()
+        (dead / "pid").write_text("999999\n")
+        if not _alive(999999):
+            assert subprocess.run([py, me, "--status", str(dead)], capture_output=True).returncode == 4
+        det = Path(d) / "det"
+        r = subprocess.run([py, me, "--runs", str(det), "--detach", "--tick", "5", "--",
+                            py, "-c", "print('away')"], capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0 and "DETACHED" in r.stdout, (r.returncode, r.stdout, r.stderr)
+        rd = next(det.iterdir())
+        for _ in range(200):
+            if (rd / "exit_code").exists():
+                break
+            time.sleep(0.1)
+        assert (rd / "exit_code").read_text().strip() == "0", "detached run did not finish"
+        assert "away" in (rd / "output.log").read_text()
+        assert subprocess.run([py, me, "--status", str(rd)], capture_output=True).returncode == 0
+    print("bg-run selftest: ok")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["--selftest"]:
+        return selftest()
+    ap = argparse.ArgumentParser(prog="bg-run", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--runs", help="record the run under DIR/<UTC timestamp>/")
+    ap.add_argument("--detach", action="store_true",
+                    help="with --runs: run the job apart from this session and return at once")
+    ap.add_argument("--into", help=argparse.SUPPRESS)
+    ap.add_argument("--status", metavar="RUN_DIR", help="report on a recorded run")
+    ap.add_argument("--tick", help="heartbeat interval in seconds (default 60)", default="60")
+    ap.add_argument("--stall", help="seconds without output before a STALL warning")
+    ap.add_argument("--kill-on-stall", action="store_true")
+    ap.add_argument("--selftest", action="store_true", help="run the built-in check")
+    ap.add_argument("cmd", nargs=argparse.REMAINDER, help="-- CMD [ARGS...]")
+    a = ap.parse_args(argv)
+    if a.status:
+        return status(Path(a.status))
+    cmd = a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd
+    if not cmd:
+        ap.error("no command given (put it after --)")
+    hb = ["--tick", a.tick] + (["--stall", a.stall] if a.stall else []) \
+        + (["--kill-on-stall"] if a.kill_on_stall else [])
+    if a.detach:
+        if not a.runs:
+            ap.error("--detach needs --runs DIR (the record is how the job is checked later)")
+        return detach(cmd, a.runs, hb)
+    return launch(cmd, a.runs, hb, a.into)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

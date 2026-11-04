@@ -1,0 +1,14 @@
+## Literature wiki
+
+{{#if view.shared}}
+- Sources live in `wiki/`: `raw/` (immutable copies), `inbox/` (still to read),
+  `concepts/` and `references/` (our synthesis). Read a folder's `_index.md` before
+  scanning it, and append each operation to `wiki/log.md`.
+{{/if}}
+{{#if view.coordinator}}
+- **When a source enters the project, load the `ingest` skill**: the raw record, an article in `concepts/`{{#if modules.known_results}}, its results in `known-results/`{{/if}}, in one commit. A link in a notes file is not an ingest; never edit `raw/`.
+{{/if}}
+{{#if view.coordinator}}
+- Before committing an ingest: `bin/wiki-check` (exits 1 on a raw file nothing synthesizes).
+{{/if}}
+- Why and how: [docs/discipline/literature-wiki.md](docs/discipline/literature-wiki.md).

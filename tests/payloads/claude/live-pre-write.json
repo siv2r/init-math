@@ -1,0 +1,17 @@
+{
+  "cwd": "/tmp/proj",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "permission_mode": "acceptEdits",
+  "prompt_id": "00000000-0000-0000-0000-000000000000",
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "tool_input": {
+    "content": "hello\n",
+    "file_path": "/tmp/proj/notes/x.md"
+  },
+  "tool_name": "Write",
+  "tool_use_id": "toolu_01H1M3R57LqCMzPj2LFGB4gE",
+  "transcript_path": "/home/user/.claude/projects/-tmp-proj/00000000-0000-0000-0000-000000000000.jsonl"
+}

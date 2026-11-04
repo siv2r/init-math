@@ -1,0 +1,1 @@
+- Z[√−2], the ring of integers of Q(√−2), is Euclidean with respect to the norm N(a + b√−2) = a^2 + 2b^2, hence a principal ideal domain and a unique factorization domain (Hardy and Wright, An Introduction to the Theory of Numbers, Ch. XIV, on Euclidean quadratic fields).

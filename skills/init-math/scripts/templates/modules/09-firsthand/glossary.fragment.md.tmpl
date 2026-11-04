@@ -1,0 +1,16 @@
+## Firsthand checks
+
+- **prior-art search**: looking for an existing treatment before building something. Its internal half searches the project's own record; its external half searches the published literature (the `lit-search` agent).
+- **load-bearing claim**: a claim that decides what work happens (build or reuse, continue or stop) or that is about to enter a durable record.
+- **durable record**: a file that outlives the session and that others will rely on: a commit, {{#if modules.conjectures}}a conjecture file, {{/if}}{{#if modules.known_results}}a known-results file, {{/if}}an `analysis.md`, a report, a handoff.
+- **firsthand check**: one cheap check you run yourself (one command, one search, one reading of the source) before passing a claim on.
+- **placement claim**: a claim about where a question stands in the literature ("open", "studied by X", "the best known result is Y"), as opposed to a specific theorem attribution.
+- **reading**: an interpretation of a source, or a theorem number, that has not been checked against the source's exact words.
+- **absence claim**: a claim that something does not exist (in a library, in the literature, in this project). It needs a search whose scope is stated.
+- **scope verdict**: a judgment that a task is too hard, out of scope, or blocked, which would stop or redirect work.
+- **scout**: one search of the libraries, literature or project for the missing piece, run before a scope verdict.
+{{#if !modules.gates}}
+- **crux** (load-bearing step): the single condition a whole argument turns on, used exactly once.
+{{/if}}
+- **exclusion list**: in a brief to an agent, what it should not report again: past failures, and the known trivialities, symmetries and invariances of the object.
+- **lit report**: the report a literature-search agent returns, tagged `[VERIFIED-FIRSTHAND]`, `[READING]` or `[PLACEMENT]` claim by claim.

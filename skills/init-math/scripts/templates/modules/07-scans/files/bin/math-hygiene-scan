@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""math-hygiene-scan: mechanical first pass over a proof-bearing document (.md or .tex).
+
+selftest: yes
+
+Run before the proof-referee, so the referee spends its effort on substance. It flags:
+  setting hygiene   analytic language (converges, neighbourhood, contour, a limit as x -> a,
+                    ...) in a document whose setting is formal or finite (formal power
+                    series, a finite field, positive characteristic). Each hit must be made
+                    rigorous or marked informal.
+  notation clash    one rendered operator name declared for two commands.
+  double qed        a manual \\qed inside a LaTeX proof environment (it already draws one).
+  uncited standard  "classical", "well known", "a theorem of" ... with no citation nearby.
+  field rules       this project's own rules, from project.toml [hygiene] rules:
+                    a plain sentence is printed as a manual checklist item; an entry
+                    "re:<regex> :: <message>" is applied to every line.
+See docs/discipline/scans.md. Advisory: exits 0 unless --strict and something was flagged.
+
+usage: bin/math-hygiene-scan [--strict] <file> [file ...]   |   --selftest
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+ANALYTIC = [
+    r"converg\w*", r"annul(?:us|i)", r"analytic continuation", r"contour", r"holomorphic",
+    r"meromorphic", r"neighbou?rhood", r"radius of convergence", r"open (?:disk|disc|ball|set)",
+    r"real[- ]analytic", r"uniform(?:ly)? converg\w*",
+]
+ANALYTIC_RE = re.compile(r"(?<![A-Za-z])(" + "|".join(ANALYTIC) + r")", re.I)
+LIMIT_RE = re.compile(r"\blim(?:it)?[_\s]*(?:_\{)?[a-z]\s*(?:\\to|\\rightarrow|->|\\longrightarrow|→)", re.I)
+FORMAL_MARK = re.compile(
+    r"\\mathbb\s*\{?F\}?_?\{?[pq]|\\F_?\{?[pq]|\bGF\(|\bF_[pq]\b|characteristic\s*(?:p|\\ne\s*0|>\s*0)"
+    r"|positive characteristic|formal (?:power|Laurent) series|finite field|\bmod\s*p\b",
+    re.I,
+)
+INFORMAL = re.compile(r"formal(?:ly)?\b|heuristic|informal|by analogy|intuitively", re.I)
+STANDARD = re.compile(
+    r"\b(classical|standard result|well[- ]known|it is (?:well[- ])?known|a theorem of|due to|folklore)\b", re.I)
+CITE_HINT = re.compile(
+    r"\\cite|\bet al\.?|arXiv|doi|\(\d{4}\)|\b(?:18|19|20)\d{2}\b|\[[A-Z][A-Za-z+]*\d{2,4}\]|\[\d+\]"
+    r"|Theorem~?\\?ref|Thm\.?\s*\d|\\ref\{|\]\(", re.I)
+QED_RE = re.compile(r"\\qed\b")
+OPDECL_RE = re.compile(r"\\(?:DeclareMathOperator\*?|newcommand)\s*\{\s*(\\[A-Za-z]+)\s*\}\s*\{([^}]*)\}")
+HINTS = {
+    "setting hygiene": "make it rigorous in this setting, or mark it explicitly as informal",
+    "notation clash": "give one of the two meanings a distinct symbol",
+    "double qed": "the proof environment draws the end mark; delete the manual \\qed",
+    "uncited standard": "cite it (author, source, theorem number)",
+    "field rules": "this project's own rules (project.toml [hygiene])",
+}
+
+
+def field_rules(root: Path) -> tuple[list[str], list[tuple[re.Pattern, str]]]:
+    try:
+        cfg = tomllib.loads((root / "project.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return [], []
+    raw = list(cfg.get("hygiene", {}).get("rules", []) or []) + list(cfg.get("stack", {}).get("hygiene_rules", []) or [])
+    manual, regex = [], []
+    for r in map(str, raw):
+        r = r.strip()
+        if r.startswith("re:") and "::" in r:
+            pat, msg = r[3:].split("::", 1)
+            try:
+                regex.append((re.compile(pat.strip()), msg.strip()))
+            except re.error as e:
+                manual.append(f"(invalid regex in project.toml, {e}) {r}")
+        elif r and r not in manual:
+            manual.append(r)
+    return manual, regex
+
+
+def scan(text: str, regex_rules: list[tuple[re.Pattern, str]]) -> tuple[dict, bool]:
+    lines = text.splitlines()
+    formal = bool(FORMAL_MARK.search(text))
+    in_proof = 0
+    b: dict[str, list[tuple[int, str]]] = {k: [] for k in HINTS}
+    rendered: dict[str, set[str]] = {}
+    for m in OPDECL_RE.finditer(text):
+        rendered.setdefault(m.group(2).strip(), set()).add(m.group(1))
+    for name, cmds in rendered.items():
+        if len(cmds) > 1:
+            b["notation clash"].append((0, f"'{name}' is declared for {', '.join(sorted(cmds))}"))
+    for i, line in enumerate(lines, 1):
+        if "\\begin{proof}" in line:
+            in_proof += 1
+        if formal and (ANALYTIC_RE.search(line) or LIMIT_RE.search(line)):
+            tag = " (marked informal?)" if INFORMAL.search(line) else ""
+            b["setting hygiene"].append((i, line.strip() + tag))
+        if in_proof and QED_RE.search(line):
+            b["double qed"].append((i, line.strip()))
+        if "\\end{proof}" in line:
+            in_proof = max(0, in_proof - 1)
+        window = " ".join(lines[max(0, i - 4):i + 3])
+        if STANDARD.search(line) and not CITE_HINT.search(window):
+            b["uncited standard"].append((i, line.strip()))
+        for pat, msg in regex_rules:
+            if pat.search(line):
+                b["field rules"].append((i, f"{msg} — {line.strip()}"))
+    return b, formal
+
+
+def report(src: str, text: str, manual: list[str], regex: list) -> int:
+    b, formal = scan(text, regex)
+    total = sum(len(v) for v in b.values())
+    note = "" if formal else " (no formal or finite setting detected, so setting hygiene was skipped)"
+    print(f"math-hygiene-scan: {src}: {total} flag(s).{note}")
+    for name, hits in b.items():
+        if not hits:
+            continue
+        print(f"[{name}] — {HINTS[name]}")
+        for ln, txt in hits[:40]:
+            print(f"   {'decl' if ln == 0 else f'L{ln}'}: {txt[:150]}")
+        if len(hits) > 40:
+            print(f"   ... and {len(hits) - 40} more")
+    return total
+
+
+def selftest() -> int:
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "project.toml").write_text(
+            "[hygiene]\nrules = ['''State every degree.''', '''re:\\bclearly\\b :: justify or drop 'clearly' ''']\n")
+        manual, regex = field_rules(root)
+        if manual != ["State every degree."] or len(regex) != 1:
+            print(f"selftest FAIL (rules): {manual} {regex}")
+            return 1
+        doc = ("Let f be a formal power series over a finite field.\n"
+               "Then the series converges on a neighbourhood of 0.\n"
+               "Heuristically it converges (informal).\n"
+               "This is a classical fact.\nSo clearly the map is onto.\n"
+               "\\DeclareMathOperator{\\Res}{Res}\n\\DeclareMathOperator{\\Rs}{Res}\n"
+               "\\begin{proof}\nDone. \\qed\n\\end{proof}\n\\qed\n")
+        b, formal = scan(doc, regex)
+        got = {k: [h[0] for h in v] for k, v in b.items()}
+        want = {"setting hygiene": [2, 3], "notation clash": [0], "double qed": [9],
+                "uncited standard": [4], "field rules": [5]}
+        if not formal or got != want:
+            print(f"selftest FAIL: {got}")
+            return 1
+        b, formal = scan("The series converges for |x| < 1.\n", [])
+        if formal or b["setting hygiene"]:
+            print("selftest FAIL: analytic setting flagged")
+            return 1
+    print("math-hygiene-scan selftest: ok")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("files", nargs="*")
+    ap.add_argument("--strict", action="store_true", help="exit 1 if anything was flagged")
+    ap.add_argument("--selftest", action="store_true")
+    a = ap.parse_args(argv)
+    if a.selftest:
+        return selftest()
+    manual, regex = field_rules(ROOT)
+    sources = [(f, None) for f in a.files] or [("<stdin>", sys.stdin.read())]
+    total = 0
+    for name, text in sources:
+        if text is None:
+            try:
+                text = Path(name).read_text(encoding="utf-8", errors="replace")
+            except OSError as e:
+                print(f"math-hygiene-scan: cannot read {name}: {e}", file=sys.stderr)
+                continue
+        total += report(name, text, manual, regex)
+    if manual:
+        print("Field rules to check by hand (project.toml [hygiene]):")
+        for r in manual:
+            print(f"   [ ] {r}")
+    print("Next: the proof-referee for the semantic classes (definitions, the load-bearing step, justification).")
+    return 1 if (a.strict and total) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

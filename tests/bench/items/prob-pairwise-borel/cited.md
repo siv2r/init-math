@@ -1,0 +1,2 @@
+- Chebyshev's inequality (Durrett, Probability: Theory and Examples, 5th ed., Section 1.6): if E[X^2] < infinity and a > 0, then P(|X - E X| >= a) <= Var(X) / a^2.
+- Variance of a sum of uncorrelated variables (Durrett, 5th ed., Section 2.2): if X_1, ..., X_n have E[X_i^2] < infinity and are uncorrelated (E[X_i X_j] = E[X_i] E[X_j] for i != j), then Var(X_1 + ... + X_n) = Var(X_1) + ... + Var(X_n).

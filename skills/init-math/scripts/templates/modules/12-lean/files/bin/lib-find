@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+r"""lib-find: search the Lean library (and this project's own Lean files) by DECLARATION NAME.
+
+    bin/lib-find <name-regex>            declarations whose name matches
+    bin/lib-find -a <regex>              any line that matches (names in proofs, docstrings)
+    bin/lib-find --lib DIR <name-regex>  search DIR instead of the detected library
+    bin/lib-find --packages <name-regex> search every Lake package, not only Mathlib
+    bin/lib-find --selftest
+
+selftest: yes
+
+Always searches the WHOLE tree, never a guessed sub-directory: the same name can live in a
+file you would not have guessed. After the hits it prints how they spread over directories,
+so a second home for a name is hard to miss. Exit 1 when nothing matches, with the list
+of directories searched (so an absence claim can state its scope).
+
+Names are matched as written at the declaration, which leaves out the enclosing
+`namespace`: search for the last components (`Prime\.two_le$`), not the full name
+(`Nat\.Prime\.two_le`). A miss on a full name is not evidence of absence.
+
+The library is found at <lake project>/.lake/packages/mathlib/Mathlib, where the Lake project
+is [stack].lake_path in project.toml, else a lakefile under formal/; MATHLIB_DIR overrides.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import sys
+import tempfile
+import tomllib
+from collections import Counter
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+DECL = re.compile(
+    r"^[ \t]*(?:@\[[^\]\n]*\][ \t\n]*)?"
+    r"(?:(?:private|protected|noncomputable|scoped|nonrec|partial|unsafe|public)[ \t]+)*"
+    r"(?:theorem|lemma|def|abbrev|instance|structure|class|inductive|alias|opaque|axiom)"
+    r"[ \t]+([^\s:({\[]+)", re.M)
+
+
+def lake_dir(root: Path) -> Path | None:
+    cfg = {}
+    if (root / "project.toml").exists():
+        with open(root / "project.toml", "rb") as f:
+            cfg = tomllib.load(f).get("stack", {})
+    lp = str(cfg.get("lake_path") or "")
+    if lp:
+        p = Path(lp) if Path(lp).is_absolute() else root / lp
+        return p if p.is_dir() else None
+    cands = [p.parent for pat in ("formal/lakefile.*", "formal/*/lakefile.*") for p in root.glob(pat)]
+    return cands[0] if len(cands) == 1 else None
+
+
+def mathlib_notice(root: Path, lib: str | None) -> str | None:
+    """A notice when the Lake project exists but Mathlib is not fetched, else None."""
+    if lib or os.environ.get("MATHLIB_DIR"):
+        return None
+    lake = lake_dir(root)
+    if lake is None or (lake / ".lake" / "packages" / "mathlib").is_dir():
+        return None
+    return (f"lib-find: Mathlib not fetched yet: run `lake exe cache get` in {lake}; "
+            "a no-match is NOT evidence of absence.")
+
+
+def search_roots(root: Path, lib: str | None, packages: bool) -> list[Path]:
+    if lib:
+        return [Path(lib)]
+    if os.environ.get("MATHLIB_DIR"):
+        return [Path(os.environ["MATHLIB_DIR"])]
+    lake = lake_dir(root)
+    if lake is None:
+        return []
+    out = [lake]  # the project's own Lean files (.lake is skipped while walking)
+    pk = lake / ".lake" / "packages"
+    if packages:
+        out += sorted(p for p in pk.glob("*") if p.is_dir())
+    elif (pk / "mathlib" / "Mathlib").is_dir():
+        out.append(pk / "mathlib" / "Mathlib")
+    return out
+
+
+def lean_files(top: Path, skip_lake: bool):
+    for dirpath, dirnames, filenames in os.walk(top):
+        dirnames[:] = sorted(d for d in dirnames if not (skip_lake and d == ".lake") and not d.startswith("."))
+        for fn in sorted(filenames):
+            if fn.endswith(".lean"):
+                yield Path(dirpath) / fn
+
+
+def find(roots: list[Path], pat: re.Pattern, anywhere: bool, lake: Path | None) -> list[tuple[Path, int, str]]:
+    hits = []
+    for top in roots:
+        for f in lean_files(top, skip_lake=(top == lake)):
+            try:
+                text = f.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if anywhere:
+                for n, line in enumerate(text.splitlines(), 1):
+                    if pat.search(line):
+                        hits.append((f, n, line.strip()))
+                continue
+            for m in DECL.finditer(text):
+                if pat.search(m.group(1)):
+                    n = text.count("\n", 0, m.start(1)) + 1
+                    line = text[text.rfind("\n", 0, m.start(1)) + 1:text.find("\n", m.start(1))]
+                    hits.append((f, n, line.strip()))
+    return hits
+
+
+def show(path: Path, base: Path) -> str:
+    try:
+        return path.relative_to(base).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def report(hits, roots, base: Path, pattern: str) -> int:
+    if not hits:
+        print(f"no declaration matching /{pattern}/ in:", file=sys.stderr)
+        for r in roots:
+            print(f"  {show(r, base)}", file=sys.stderr)
+        print("(names are matched without their enclosing namespace: try the last component, "
+              "or -a to match any line)", file=sys.stderr)
+        return 1
+    for f, n, line in hits:
+        print(f"{show(f, base)}:{n}: {line[:160]}")
+    spread = Counter(show(f.parent, base) for f, _, _ in hits)
+    print(f"\n{len(hits)} hit(s) in {len(spread)} director{'y' if len(spread) == 1 else 'ies'}:")
+    for d, c in spread.most_common():
+        print(f"  {c:5d}  {d}")
+    return 0
+
+
+def selftest() -> int:
+    with tempfile.TemporaryDirectory(prefix="lib-find selftest ") as tmp:
+        lib = Path(tmp) / "Lib"
+        (lib / "Algebra").mkdir(parents=True)
+        (lib / "Order").mkdir()
+        (lib / "Algebra" / "A.lean").write_text(
+            "theorem foo_bar_add (a : Nat) : a = a := rfl\n"
+            "@[simp] lemma foo_bar_mul : True := trivial\n"
+            "-- foo_bar_comment is not a declaration\n")
+        (lib / "Order" / "B.lean").write_text(
+            "noncomputable def foo_bar_le : Nat := 0\nexample : foo_bar_le = 0 := rfl\n")
+        base = Path(tmp)
+        proj = base / "proj"
+        (proj / "formal" / "P").mkdir(parents=True)
+        (proj / "formal" / "P" / "lakefile.toml").write_text("name = 'P'\n")
+        note = mathlib_notice(proj, None)
+        (proj / "formal" / "P" / ".lake" / "packages" / "mathlib").mkdir(parents=True)
+        decl = find([lib], re.compile("foo_bar"), False, None)
+        anyw = find([lib], re.compile("foo_bar"), True, None)
+        miss = find([lib], re.compile("nothing_here"), False, None)
+        checks = [
+            ("finds declarations by name in every directory",
+             sorted(Path(f).parent.name for f, _, _ in decl) == ["Algebra", "Algebra", "Order"]),
+            ("attributes and modifiers are skipped", any("foo_bar_mul" in l for _, _, l in decl)
+             and any("foo_bar_le" in l for _, _, l in decl)),
+            ("-a also finds non-declaration mentions", len(anyw) == 5),
+            ("a missing Mathlib prints the notice, a present one does not",
+             bool(note) and "NOT evidence of absence" in note and "lake exe cache get" in note
+             and mathlib_notice(proj, None) is None and mathlib_notice(proj, str(lib)) is None),
+            ("a miss exits 1", report(miss, [lib], base, "nothing_here") == 1),
+        ]
+    for n, ok in checks:
+        print(("PASS " if ok else "FAIL ") + n)
+    return 0 if all(ok for _, ok in checks) else 1
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["--selftest"]:
+        return selftest()
+    ap = argparse.ArgumentParser(prog="lib-find", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog=__doc__.split("\n\n", 1)[1])
+    ap.add_argument("pattern", help="a regular expression matched against declaration names")
+    ap.add_argument("-a", "--anywhere", action="store_true", help="match any line, not only names")
+    ap.add_argument("--lib", help="directory to search instead of the detected library")
+    ap.add_argument("--packages", action="store_true", help="search all Lake packages")
+    args = ap.parse_args(argv)
+    roots = search_roots(ROOT, args.lib, args.packages)
+    if not roots or not all(r.is_dir() for r in roots):
+        print("lib-find: no library found. Set [stack].lake_path in project.toml, create the Lean "
+              "project (see formal/README.md), or pass --lib DIR / MATHLIB_DIR.", file=sys.stderr)
+        return 2
+    try:
+        pat = re.compile(args.pattern)
+    except re.error as e:
+        print(f"lib-find: bad pattern: {e}", file=sys.stderr)
+        return 2
+    note = mathlib_notice(ROOT, args.lib)
+    if note:
+        print(note, file=sys.stderr)
+    lake = lake_dir(ROOT)
+    return report(find(roots, pat, args.anywhere, lake), roots, ROOT, args.pattern)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

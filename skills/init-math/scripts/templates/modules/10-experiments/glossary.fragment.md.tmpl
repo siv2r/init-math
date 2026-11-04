@@ -1,0 +1,12 @@
+## Experiments
+
+- **experiment**: one directory `experiments/<slug>/` holding a README (goal, prior art, method), a driver, and its archived runs.
+- **driver**: the script that does an experiment's computation. It reads `EXP_TIER` and `EXP_OUT` and writes `result.json` (see `experiments/TEMPLATE/driver.py`).
+- **run tier** (`smoke` / `full` / `deep`): the size of a run. `smoke` takes seconds and checks the pipeline on the hardest small cases; `full` is the real sweep; `deep` is an opt-in larger one.
+- **run bundle**: the directory `experiments/<slug>/runs/<timestamp>/` that one run leaves: `manifest.json` (how it was run), `output.txt` (what it printed), `result.json` (what it found), and later `analysis.md`.
+- **watchdog**: `bin/guard-run`, which kills a run that exceeds its time or memory limit and reports one verdict word (OK, FAILED, TIMEOUT, EXPLODED-mem, INTERRUPTED, ERROR).
+- **hard corners**: the cases most likely to break a driver: the smallest and degenerate ones, the boundary of the parameter range, the largest size the run will reach.
+- **cold analysis**: interpreting a run bundle in a fresh session, from the bundle alone, so the reading is not shaped by what the builder expected.
+- **INCONCLUSIVE**: the third verdict besides PASS and FAIL: the budget ran out or the instrument failed its own check, so the run decides nothing.
+- **coverage floor**: the minimum share of the intended cases a sweep must actually complete before its verdict is reported as covering the family.
+- **capped sample**: a set of cases cut down by a cost limit or chosen for convenience. It is biased, usually against the most extreme cases.

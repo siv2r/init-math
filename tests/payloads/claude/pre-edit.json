@@ -1,0 +1,1 @@
+{"session_id":"s1","transcript_path":"/tmp/t.jsonl","cwd":"/tmp/proj","hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/tmp/proj/wiki/conjectures/C001-x.md","old_string":"a","new_string":"b"}}

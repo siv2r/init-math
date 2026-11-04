@@ -1,0 +1,83 @@
+#!/usr/bin/env python3
+"""exp-pending: list experiment run bundles that have not been analyzed yet.
+
+    bin/exp-pending          bundles under experiments/*/runs/* with no analysis.md
+    bin/exp-pending --all    every bundle, marked analyzed or pending
+    bin/exp-pending --selftest
+
+selftest: yes
+
+A bundle is analyzed when its directory contains analysis.md. Write that file in a fresh
+session, from the bundle alone (manifest.json, output.txt, result.json), so the analysis
+does not lean on what the session that built the driver expected to see.
+Exit 0 always (an empty list is not an error).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+
+def bundles(root: Path) -> list[Path]:
+    out = []
+    for d in sorted((root / "experiments").glob("*/runs/*")):
+        if d.is_dir() and d.parent.parent.name != "TEMPLATE" and \
+                ((d / "manifest.json").exists() or (d / "result.json").exists()):
+            out.append(d)
+    return out
+
+
+def describe(root: Path, d: Path) -> str:
+    def load(name):
+        try:
+            return json.loads((d / name).read_text())
+        except (OSError, json.JSONDecodeError):
+            return {}
+    m, r = load("manifest.json"), load("result.json")
+    state = "analyzed" if (d / "analysis.md").exists() else "PENDING"
+    return (f"{state:8}  {d.relative_to(root).as_posix()}/  tier={m.get('tier', '?')}  "
+            f"watchdog={m.get('guard', {}).get('verdict', m.get('status', '?'))}  "
+            f"verdict={r.get('verdict', '?')}")
+
+
+def selftest() -> int:
+    with tempfile.TemporaryDirectory(prefix="exp-pending selftest ") as tmp:
+        root = Path(tmp)
+        for name, analyzed in (("a/runs/1", False), ("a/runs/2", True), ("TEMPLATE/runs/1", False)):
+            d = root / "experiments" / name
+            d.mkdir(parents=True)
+            (d / "result.json").write_text('{"verdict": "PASS"}')
+            if analyzed:
+                (d / "analysis.md").write_text("# analysis\n")
+        pending = [d for d in bundles(root) if not (d / "analysis.md").exists()]
+        checks = [("lists only the bundle without analysis.md",
+                   [p.relative_to(root).as_posix() for p in pending] == ["experiments/a/runs/1"]),
+                  ("--all sees both real bundles", len(bundles(root)) == 2)]
+    for n, ok in checks:
+        print(("PASS " if ok else "FAIL ") + n)
+    return 0 if all(ok for _, ok in checks) else 1
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["--selftest"]:
+        return selftest()
+    ap = argparse.ArgumentParser(prog="exp-pending", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog=__doc__.split("\n\n", 1)[1])
+    ap.add_argument("--all", action="store_true", help="also list analyzed bundles")
+    ap.add_argument("--root", help="project root (default: this script's ../)")
+    args = ap.parse_args(argv)
+    root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parent.parent
+    shown = [d for d in bundles(root) if args.all or not (d / "analysis.md").exists()]
+    for d in shown:
+        print(describe(root, d))
+    if not shown:
+        print("no pending bundles" if not args.all else "no bundles")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

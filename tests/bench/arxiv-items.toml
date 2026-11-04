@@ -1,0 +1,472 @@
+# Reviewer-bench items built from recent arXiv corrections.
+#
+# The items themselves stay outside the repository: their text is verbatim from papers whose
+# licences do not allow redistribution. This file records which paper and version each item
+# comes from, so the set can be rebuilt. Procedure: pick a math paper first posted after the
+# reviewer model's training data whose later version or withdrawal names an error in a
+# proof; diff the version with the error against the correction; excerpt the result, its
+# proof and what it depends on, stripped of anything identifying the paper; key the step
+# the authors changed; have a second model audit the key against the diff. A slip that is
+# present in every version and is not the keyed error may be repaired in the excerpt; the
+# repair is recorded in the item's key as `excerpt_edit`. A `-decoy` item adds one
+# model-written, blatant, repairable slip beside the authors' error (`decoy = true`); its
+# real error is still the authors'.
+
+[[item]]
+id = "arx-brouwer-wkl"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2609.04644v2 (error); arXiv:2609.04644v3 (correction)"
+error_class = "misapplied theorem (WKL/BKL applied to a non-decidable tree)"
+statement_true = "yes (WKL implies Brouwer's fixed-point theorem over EL_0 is proved in the corrected version by a different route, Sperner-based approximate fixed points plus the minimum principle, which is cited as equivalent to WKL over EL_0; the classical analogue over RCA_0 is standard)"
+excerpt_edit = true
+
+[[item]]
+id = "arx-brouwer-wkl-decoy"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2609.04644v2 (error); arXiv:2609.04644v3 (correction)"
+error_class = "misapplied theorem (WKL/BKL applied to a non-decidable tree)"
+statement_true = "yes (WKL implies Brouwer's fixed-point theorem over EL_0 is proved in the corrected version by a different route, Sperner-based approximate fixed points plus the minimum principle, which is cited as equivalent to WKL over EL_0; the classical analogue over RCA_0 is standard)"
+excerpt_edit = true
+decoy = true
+tests = "a second, blatant, model-written slip (the decoy) beside the authors' real error"
+
+[[item]]
+id = "arx-brouwer-wkl-fixed"
+kind = "control"
+source = "arXiv:2609.04644v2 (error); arXiv:2609.04644v3 (correction)"
+statement_true = "yes"
+excerpt_edit = true
+
+[[item]]
+id = "arx-cayley-hilbert"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2609.06541v1 (error); arXiv:2609.06541v2 (correction)"
+error_class = "false statement (wrong parametrizing space: a non-injective family of linear spaces taken as the parameter space)"
+statement_true = "no (the second component is P(Sym^d E_3^vee) over Fl(3), of dimension N_d + 25; the corrected version states this. The first component over Fl(1,2) is as stated. Theorem 3.2 and Corollary 3.4, two components and disconnectedness, are unaffected.)"
+
+[[item]]
+id = "arx-cayley-hilbert-fixed"
+kind = "control"
+source = "arXiv:2609.06541v1 (error); arXiv:2609.06541v2 (correction)"
+statement_true = "yes (audit: each point of the Hilbert scheme is a degree d threefold in a unique linear P^4 of G, the P^4's form the two homogeneous families E_6/P_{1,2} and E_6/P_3 with those stabilizers, M maps bijectively onto the Hilbert scheme, and h^0(X, N_X G) = N_d + dim Fl(J) = dim M was verified by Bott's theorem on P^4 for d >= 3, so the component is smooth and the proper bijection is an isomorphism)"
+
+[[item]]
+id = "arx-chowla-simple"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2610.22427v2 (error); arXiv:2610.22427v3 (withdrawal)"
+error_class = "false intermediate claim (non sequitur in the counting)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-chowla-simple-decoy"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2610.22427v2 (error); arXiv:2610.22427v3 (withdrawal)"
+error_class = "false intermediate claim (non sequitur in the counting)"
+statement_true = "yes"
+decoy = true
+tests = "a second, blatant, model-written slip (the decoy) beside the authors' real error"
+
+[[item]]
+id = "arx-coxeter-palindromes"
+kind = "flawed"
+fix_needs_review = false
+source = "arXiv:2609.29022v1 (error); arXiv:2609.29022v2 (correction)"
+error_class = "false intermediate claim (true statement): the proof asserts that the exhibited automaton recognises Pal, and it does not (it accepts st)"
+statement_true = "yes (the language of odd-length alternating words in s, t is regular; the corrected version exhibits a correct six-state DFA)"
+excerpt_edit = true
+
+[[item]]
+id = "arx-coxeter-palindromes-fixed"
+kind = "control"
+source = "arXiv:2609.29022v1 (error); arXiv:2609.29022v2 (correction)"
+statement_true = "yes"
+excerpt_edit = true
+
+[[item]]
+id = "arx-density-xy"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2609.30410v1 (error); arXiv:2609.30410v2 (correction)"
+error_class = "missing case leading to a false statement (an incomplete case split: 'dependent' is wrongly taken to mean Q is a rational combination of P_1 and P_2)"
+statement_true = "no"
+
+[[item]]
+id = "arx-density-xy-fixed"
+kind = "control"
+source = "arXiv:2609.30410v1 (error); arXiv:2609.30410v2 (correction)"
+statement_true = "yes (believed; rests on the cited characteristic-factor theorems)"
+
+[[item]]
+id = "arx-eaton-moreto"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2608.22813v1 (error); arXiv:2608.22813v3 (withdrawal)"
+error_class = "unjustified step (reduction hypothesis applied outside its scope)"
+statement_true = "unknown"
+
+[[item]]
+id = "arx-eaton-moreto-decoy"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2608.22813v1 (error); arXiv:2608.22813v3 (withdrawal)"
+error_class = "unjustified step (reduction hypothesis applied outside its scope)"
+statement_true = "unknown"
+decoy = true
+tests = "a second, blatant, model-written slip (the decoy) beside the authors' real error"
+
+[[item]]
+id = "arx-fano-index"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2608.03434v2 (error); arXiv:2608.03434v3 (correction)"
+error_class = "misapplied theorem (false statement): the age criterion is invoked at k = n-1+i, outside its range 2 <= k <= q-2, which q >= n+4 does not guarantee"
+statement_true = "no (parts (1) and (2) are true; part (3) is false as stated, counterexample P(2,2,2,1,1) with n = 4, q = 8, i = 4; brute force over all canonical well-formed cases with n = 4, q <= 40, n = 5, q <= 28, n = 6, q <= 24 finds failures of (3) only for q <= 2n)"
+
+[[item]]
+id = "arx-fano-index-fixed"
+kind = "control"
+source = "arXiv:2608.03434v2 (error); arXiv:2608.03434v3 (correction)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-liouville-lp"
+kind = "flawed"
+fix_needs_review = false
+source = "arXiv:2607.28057v1 (error); arXiv:2607.28057v2 (correction)"
+error_class = "false inequality (unjustified step), true statement"
+statement_true = "yes"
+
+[[item]]
+id = "arx-liouville-lp-fixed"
+kind = "control"
+source = "arXiv:2607.28057v1 (error); arXiv:2607.28057v2 (correction)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-negative-eigenvalue"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2607.28153v1 (error); arXiv:2607.28153v2 (correction)"
+error_class = "false intermediate claim (unjustified step)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-negative-eigenvalue-decoy"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2607.28153v1 (error); arXiv:2607.28153v2 (correction)"
+error_class = "false intermediate claim (unjustified step)"
+statement_true = "yes"
+decoy = true
+tests = "a second, blatant, model-written slip (the decoy) beside the authors' real error"
+
+[[item]]
+id = "arx-negative-eigenvalue-fixed"
+kind = "control"
+source = "arXiv:2607.28153v1 (error); arXiv:2607.28153v2 (correction)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-ns-energy-identity"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2609.18808v1 (error); arXiv:2609.18808v2 (withdrawal)"
+error_class = "computational error (wrong H\u00f6lder exponent) leading to an invalid absorption step"
+statement_true = "unknown"
+
+[[item]]
+id = "arx-p-exceptional"
+kind = "flawed"
+fix_needs_review = false
+source = "arXiv:2608.08969v1 (error); arXiv:2608.08969v2 (correction)"
+error_class = "justification gap (true conclusion): lemma applied outside its hypothesis (degenerate case psi_d = 0 not handled)"
+statement_true = "yes (the case w_p(d) < p is settled by Proposition 2.2 (ii) and Lemma 3.2 (i), as in the corrected version; for w_p(d) >= p the v1 argument applies unchanged)"
+excerpt_edit = true
+
+[[item]]
+id = "arx-p-exceptional-fixed"
+kind = "control"
+source = "arXiv:2608.08969v1 (error); arXiv:2608.08969v2 (correction)"
+statement_true = "yes"
+excerpt_edit = true
+
+[[item]]
+id = "arx-quadratic-practical"
+kind = "flawed"
+fix_needs_review = false
+source = "arXiv:2608.25591v1 (error); arXiv:2608.25591v2 (correction)"
+error_class = "unjustified step, justification gap with a true conclusion (the congruence n_1 + n_2 = -b (mod 2^m) holds, but it is derived by invoking Vieta's formulas in Z/2^m Z, where they fail in general; the hypothesis that makes them hold here, b odd so n_1 - n_2 is a unit, is never used)"
+statement_true = "yes (the proof becomes complete once the Vieta step is justified by the parity argument; also checked by brute force for all odd b < 200 and even c < 200)"
+
+[[item]]
+id = "arx-quadratic-practical-fixed"
+kind = "control"
+source = "arXiv:2608.25591v1 (error); arXiv:2608.25591v2 (correction)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-resonant-states"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2607.25686v1 (error); arXiv:2607.25686v2 (correction)"
+error_class = "false intermediate claim (deck transformations exist in the number the degree suggests; only true for regular coverings)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-resonant-states-fixed"
+kind = "control"
+source = "arXiv:2607.25686v1 (error); arXiv:2607.25686v2 (correction)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-sparse-extrapolation"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2608.22988v1 (error); arXiv:2608.22988v2 (withdrawal)"
+error_class = "misapplied lemma (hypothesis not verified; circular choice of constants)"
+statement_true = "no"
+excerpt_edit = true
+
+[[item]]
+id = "arx-sparse-extrapolation-asis"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2608.22988v1 (error); arXiv:2608.22988v2 (withdrawal)"
+error_class = "misapplied lemma (hypothesis not verified; circular choice of constants)"
+statement_true = "no"
+tests = "satisfaction of search: the text also contains a visible, repairable slip after (37); a plain reread found it and stopped (3/3)"
+
+[[item]]
+id = "arx-diophantine-spectrum"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2608.20191v1 (error); arXiv:2608.20191v2 (correction)"
+error_class = "justification gap (true conclusion): uniqueness claim asserted without proof and only for the K- and (K+1)-digit zones, while the contradiction drawn from it needs uniqueness in all of c"
+statement_true = "yes (the corrected version proves Dio(c) = 1 by a complete argument, and Rdio = 1 iff Dio = 1)"
+excerpt_edit = true
+
+[[item]]
+id = "arx-diophantine-spectrum-fixed"
+kind = "control"
+source = "arXiv:2608.20191v1 (error); arXiv:2608.20191v2 (correction)"
+statement_true = "yes"
+excerpt_edit = true
+
+[[item]]
+id = "arx-frattini-mcg"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2610.01734v1 (error); arXiv:2610.01734v2 (correction)"
+error_class = "justification gap (true conclusion): Lie algebra of the commutator subgroup of a possibly disconnected group taken to be the derived algebra"
+statement_true = "yes (the corrected proof is complete: Ad(x) is orthogonal and unipotent, hence trivial, so the identity component is central and Schur's theorem applies)"
+excerpt_edit = true
+
+[[item]]
+id = "arx-frattini-mcg-fixed"
+kind = "control"
+source = "arXiv:2610.01734v1 (error); arXiv:2610.01734v2 (correction)"
+statement_true = "yes"
+excerpt_edit = true
+
+[[item]]
+id = "arx-green-pole"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2608.17630v1 (error); arXiv:2608.17630v2 (correction)"
+error_class = "misapplied theorem / false statement"
+statement_true = "no"
+
+[[item]]
+id = "arx-green-pole-fixed"
+kind = "control"
+source = "arXiv:2608.17630v1 (error); arXiv:2608.17630v2 (correction)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-isometric-immersion"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2607.15838v1 (error); arXiv:2607.15838v2 (correction)"
+error_class = "misapplied or false cited result"
+statement_true = "unknown"
+
+[[item]]
+id = "arx-isometric-immersion-fixed"
+kind = "control"
+source = "arXiv:2607.15838v1 (error); arXiv:2607.15838v2 (correction)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-local-boundedness"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2608.19909v1 (error); arXiv:2608.19909v2 (withdrawal)"
+error_class = "inconsistent hypotheses: the standing exponent range is empty, so the lemma (and the whole section) is vacuous; the proof's positivity step epsilon_0 > 0 is a valid inference from the unsatisfiable premise q > (N+p)/(N-p) and holds for no admissible (p, q)"
+statement_true = "yes, vacuously: no (p, q) satisfies the standing range, so the lemma has no instances. Whether the bound holds in the nonempty range p = N(q+1)/(N+q+1), 1 < q < (N+2)/(N-2) is unknown."
+excerpt_edit = true
+
+[[item]]
+id = "arx-mfg-terminal"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2610.05730v1 (error); arXiv:2610.05730v2 (correction)"
+error_class = "unjustified step, true conclusion: terminal-time differentiability (lemma proved only on [0,T_0], T_0 < T, used at t = T)"
+statement_true = "yes (believed): Lemma 4.3 as stated (only T_0 < T) is weaker than the corrected version's lemma, and (4.11) is the identity the corrected version proves via differentiability into C([0,T],L^1); that proof rests on a time-uniform constant in the cited kernel bound, which is plausible because the drift perturbation B is bounded uniformly on [0,T] even though d_x u* is not"
+excerpt_edit = true
+
+[[item]]
+id = "arx-mfg-terminal-fixed"
+kind = "control"
+source = "arXiv:2610.05730v1 (error); arXiv:2610.05730v2 (correction)"
+statement_true = "yes"
+excerpt_edit = true
+
+[[item]]
+id = "arx-monopole-acyl"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2608.17881v1 (error); arXiv:2608.17881v2 (correction)"
+error_class = "false statement (sign error: an inequality used in the wrong direction on the end)"
+statement_true = "no (with the stated conventions phi_D^{m} changes sign on U(eps). The corrected version reverses the sign convention at the singularities, phi_D = m_i^I - 1/(4 pi r_i) + O(r_i) with balancing sum k^I = sum k^O, so k_1^O = +n and phi_D -> +infinity along the end; the bound then holds, with eps = sqrt(5/(8 pi m)).)"
+
+[[item]]
+id = "arx-monopole-acyl-fixed"
+kind = "control"
+source = "arXiv:2608.17881v1 (error); arXiv:2608.17881v2 (correction)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-prime-tiling"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2607.19572v1 (error); arXiv:2607.19572v2 (withdrawal)"
+error_class = "unjustified step (induction step of a lemma; its statement also has typo-level defects)"
+statement_true = "yes (proved independently, per the author's withdrawal note)"
+
+[[item]]
+id = "arx-squarefree-2q"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2608.10335v1 (error); arXiv:2608.10335v2 (withdrawal)"
+error_class = "justification gap (conclusion unknown): a limit of local densities over primes of bounded norm is taken as a positive proportion of integers, with no bound on square divisors from prime ideals of large norm"
+statement_true = "unknown"
+excerpt_edit = true
+
+[[item]]
+id = "arx-vizing-two-thirds"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2607.01109v1 (error); arXiv:2607.01109v3 (correction; v2 is a withdrawal notice)"
+error_class = "false inequality (a rewritten cited bound adds a surplus term)"
+statement_true = "believed yes, by the corrected version's stronger bound, which is not independently confirmed"
+
+[[item]]
+id = "arx-vizing-two-thirds-fixed"
+kind = "control"
+source = "arXiv:2607.01109v1 (error); arXiv:2607.01109v3 (correction; v2 is a withdrawal notice)"
+statement_true = "believed yes (provisional control: a new bound beyond the published ones, checked by one auditor)"
+
+# Round 4 (2026-10-29): flaws in cited or in-paper results and in hypotheses, chosen as the
+# kinds the plain referee missed in round 3.
+
+[[item]]
+id = "arx-rearrangement"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2607.18726v1 (error); arXiv:2607.18726v2 (correction)"
+error_class = "misapplied or false cited result (forcing credited with the Laver property it lacks)"
+statement_true = "no"
+
+[[item]]
+id = "arx-multilinear-hilbert"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2609.07513v1 (error); arXiv:2609.07513v2 (correction)"
+error_class = "unjustified step (false estimate; parameter range too large)"
+statement_true = "no"
+
+[[item]]
+id = "arx-multilinear-hilbert-fixed"
+kind = "control"
+source = "arXiv:2609.07513v1 (error); arXiv:2609.07513v2 (correction)"
+statement_true = "yes (believed; two estimates are deferred to a cited argument)"
+
+[[item]]
+id = "arx-bilevel-barrier"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2607.10957v1 (error); arXiv:2607.10957v2 (correction)"
+error_class = "unjustified step: omitted term in the rate derivation (wrong exponent); statement weakened in the correction"
+statement_true = "unknown"
+
+[[item]]
+id = "arx-bilevel-barrier-fixed"
+kind = "control"
+source = "arXiv:2607.10957v1 (error); arXiv:2607.10957v2 (correction)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-spde-rough"
+kind = "flawed"
+fix_needs_review = false
+source = "arXiv:2607.13341v1 (error); arXiv:2607.13341v2 (correction)"
+error_class = "justification gap (true conclusion): false intermediate claim (strict monotonicity of the truncation stopping times) used to get tau_max > 0"
+statement_true = "yes"
+excerpt_edit = true
+
+[[item]]
+id = "arx-biricci-contractible"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2610.08686v1 (error); arXiv:2610.08686v2 (correction)"
+error_class = "unjustified step (false pointwise inequality)"
+statement_true = "unknown"
+
+[[item]]
+id = "arx-biricci-contractible-fixed"
+kind = "control"
+source = "arXiv:2610.08686v1 (error); arXiv:2610.08686v2 (correction)"
+statement_true = "yes (believed)"
+
+[[item]]
+id = "arx-poset-flow"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2607.11639v2 (error); arXiv:2607.11639v3 (correction)"
+error_class = "justification gap (true conclusion): case omitted (Delta-Hausdorff choice of Top)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-poset-flow-fixed"
+kind = "control"
+source = "arXiv:2607.11639v2 (error); arXiv:2607.11639v3 (correction)"
+statement_true = "yes"
+
+[[item]]
+id = "arx-closure-spectrality"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2607.25674v1 (error); arXiv:2607.25674v2 (correction)"
+error_class = "false in-paper lemma (patch continuity of the induced operation); false statement"
+statement_true = "no"
+excerpt_edit = true
+
+[[item]]
+id = "arx-closure-spectrality-fixed"
+kind = "control"
+source = "arXiv:2607.25674v1 (error); arXiv:2607.25674v2 (correction)"
+statement_true = "yes (rests on a cited theorem on compact semitopological semilattices)"
+excerpt_edit = true
+
+[[item]]
+id = "arx-flat-nilpotent"
+kind = "flawed"
+fix_needs_review = true
+source = "arXiv:2610.23481v1 (error); arXiv:2610.23481v2 (withdrawal)"
+error_class = "false cited result (as stated)"
+statement_true = "unknown"

@@ -1,0 +1,12 @@
+kind = "flawed"
+error_class = "hard step glossed as standard: a primitive root g < p claimed to stay primitive mod p^2"
+location = "Step 1: 'It is p(p − 1) as soon as g^(p−1) ≢ 1 (mod p^2), and for a primitive root g modulo p with 1 < g < p this is the standard lifting step.'"
+catch = "says that this step is false: a primitive root g modulo p with 1 < g < p can satisfy g^(p-1) ≡ 1 (mod p^2), e.g. p = 29, g = 14 (also p = 37, g = 18); the standard lemma only says that one of g and g + p is a primitive root modulo p^2; ideally adds that the statement itself fails at p = 40487, whose least primitive root 5 has 5^40486 ≡ 1 (mod 40487^2)"
+audited = "2026-10-28, Claude Fable 5.1: Python: least primitive root is a primitive root mod p^2 for all primes p < 2000; p = 40487 has least primitive root 5 with 5^40486 = 1 mod p^2; step counterexamples (29,14), (37,18), (43,19), (71,11), (103,43) confirmed; Steps 2 and 3 re-derived including p = 3"
+# The statement is FALSE; the smallest counterexample is p = 40487 (least primitive root 5),
+# so no small-case check finds it.
+# Verified in Python: scanning all primes 3 <= p < 40487, the least primitive root g always
+# has g^(p-1) != 1 mod p^2; at p = 40487, g = 5 and pow(5, 40486, 40487**2) == 1.
+# Counterexamples to the step itself (primitive root g mod p, 1 < g < p, g^(p-1) ≡ 1 mod p^2):
+# (29, 14), (37, 18), (43, 19), (71, 11), (103, 43).
+# Steps 2 and 3 are correct (the usual lifting from p^2 to p^k for odd p).

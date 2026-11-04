@@ -1,0 +1,316 @@
+#!/usr/bin/env python3
+"""hedge-scan: list the strength words in a draft, high-visibility lines first.
+
+Run on a drafted finding BEFORE the claim-auditor. Headlines, bold leads and summary lines
+are read in isolation, so each must carry the same qualifier as the most hedged body claim
+it summarizes; otherwise the review fails on a header while the body is honest.
+Advisory: always exits 0. See docs/discipline/scans.md.
+
+selftest: yes
+usage: bin/hedge-scan <file> [file ...]   |   bin/hedge-scan < draft.md   |   --diff   |   --selftest
+
+--diff reads the staged changes (`git diff --cached`) and reports, within each changed hunk:
+  removed hedge     a removed line carrying "heuristically", "conjecturally", "morally", an
+                    ARGUED verdict or an argued label, whose replacement lines lack it, in a
+                    file to which the commit adds no dated evidence entry;
+  removed @assumes  a removed `@assumes:` line not added back elsewhere in the commit, whose
+                    claim is not a proved or refuted conjecture;
+  ARGUED line       an added ARGUED verdict with no `premises:`, or a label outside
+                    project.toml [arguments] labels;
+  narrowing         a conjecture whose `# C<nnn>:` statement or `family:` line changed while
+                    its evidence has a REFUTED or NARROWED entry, with no `repair:` line added;
+  stronger copy     an added line in another file calling a conjecture proved, a theorem or
+                    supported while its ledger status is lower.
+The commit gate prints these; nothing refuses. See docs/discipline/informal-arguments.md.
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+VERBS = [
+    "proved", "proven", "proves", "prove", "holds", "theorem", "universal", "iff",
+    "necessarily", "resolved", "resolve", "done", "confirmed", "confirms", "settled",
+    "established", "rigorous", "rigorously", "exactly", "always", "never", "guarantee",
+    "guaranteed", "complete", "certified", "sufficient", "equivalent", "identical",
+    "for all", "any ", "impossible",
+]
+VERB_RE = re.compile(r"(?<![A-Za-z])(" + "|".join(re.escape(v) for v in VERBS) + r")", re.I)
+SUMMARY_LEAD = re.compile(
+    r"^\s*[*_>\-\s]*\**\s*(net|verdict|bottom line|summary|conclusion|status|result|overall|headline)\b",
+    re.I,
+)
+TEX_HEAD = re.compile(r"^\s*\\(?:(?:sub)*section|chapter|paragraph|title|begin\{(?:theorem|proposition|lemma|corollary|conjecture)\})")
+FENCE = re.compile(r"^\s*(```|~~~)")
+ORDER = {"HEADER": 0, "SUMMARY": 1, "BOLD": 2, "body": 3}
+
+
+def locus(line: str) -> str:
+    s = line.lstrip()
+    if s.startswith("#") or TEX_HEAD.match(line):
+        return "HEADER"
+    if SUMMARY_LEAD.match(line):
+        return "SUMMARY"
+    if re.match(r"\s*[-*>\s]*\*\*", line):
+        return "BOLD"
+    if any(VERB_RE.search(b) for b in re.findall(r"\*\*(.+?)\*\*", line)):
+        return "BOLD"
+    return "body"
+
+
+def scan(text: str) -> list[tuple[str, int, list[str], str]]:
+    hits, fence = [], False
+    for i, line in enumerate(text.splitlines(), 1):
+        if FENCE.match(line):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        ms = VERB_RE.findall(line)
+        if ms:
+            hits.append((locus(line), i, sorted({m.lower().strip() for m in ms}), line.strip()))
+    return sorted(hits, key=lambda h: (ORDER[h[0]], h[1]))
+
+
+def report(src: str, text: str) -> None:
+    hits = scan(text)
+    if not hits:
+        print(f"hedge-scan: no strength words in {src}.")
+        return
+    print(f"hedge-scan: {src}: {len(hits)} line(s) with strength words, high-visibility first.")
+    print("For each HEADER / SUMMARY / BOLD line: does it carry the qualifier of the most hedged")
+    print("body claim it summarizes (proved or well supported? all cases or some? exact or sampled?)")
+    for loc, ln, verbs, s in hits:
+        print(f"  [{loc:7}] L{ln}: ({', '.join(verbs)}) {s[:160]}")
+
+
+# --- --diff: hedges, assumptions and argued verdicts in the staged changes ---------------
+
+HEDGE = re.compile(r"\bARGUED\b|\bargued \(|\bmodel-only \(|\bheuristically\b|\bconjecturally\b|\bmorally\b",
+                   re.I)
+ASSUMES = re.compile(r"^\s*(?:[-*]\s*)?`?@assumes`?:\s*(.+?)\s*$")
+DATED_ENTRY = re.compile(r"^\s*[-*]\s*\d{4}-\d{2}-\d{2}\b")
+ARGUED_LINE = re.compile(r"\bARGUED\s*\(([^;)]*(?:\([^)]*\)[^;)]*)*)(;[^\n]*)?\)?")
+
+
+def hunks(diff: str) -> list[tuple[str, list[str], list[str]]]:
+    """(path, removed lines, added lines) per hunk of a unified diff."""
+    out: list[tuple[str, list[str], list[str]]] = []
+    path, cur = "", None
+    for line in diff.splitlines():
+        if line.startswith("diff --git "):
+            cur = None
+        elif line.startswith("+++ "):
+            path = line[4:].strip()
+            path = path[2:] if path.startswith("b/") else path
+        elif line.startswith("--- "):
+            continue
+        elif line.startswith("@@"):
+            cur = (path, [], [])
+            out.append(cur)
+        elif cur is not None and line.startswith("-"):
+            cur[1].append(line[1:])
+        elif cur is not None and line.startswith("+"):
+            cur[2].append(line[1:])
+    return out
+
+
+def label_words(root: Path) -> list[str] | None:
+    try:
+        with open(root / "project.toml", "rb") as f:
+            labels = tomllib.load(f).get("arguments", {}).get("labels")
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    return [str(x).lower() for x in labels] if isinstance(labels, list) else None
+
+
+RANK = {"open": 0, "testing": 0, "weakly-supported": 1, "supported": 2, "scope-tight": 2, "proved": 3}
+STRONG = re.compile(r"(?<!not )(?<!un)\b(proved|proven|a theorem|supported)\b", re.I)
+CID = re.compile(r"\b(C\d{3})\b")
+
+
+def diff_findings(diff: str, settled: set[str], labels: list[str] | None,
+                  statuses: dict[str, str] | None = None, staged: dict[str, str] | None = None) -> list[str]:
+    """Pure: the findings for a staged diff. `settled` holds the ids of proved or refuted
+    conjectures; `labels` is the label vocabulary (None: do not check label words);
+    `statuses` maps conjecture ids to their ledger status; `staged` maps a conjecture file's
+    path to its staged text."""
+    statuses, staged = statuses or {}, staged or {}
+    hs = hunks(diff)
+    added_all = {a.strip() for _, _, added in hs for a in added}
+    dated = {p for p, _, added in hs if any(DATED_ENTRY.match(a) for a in added)}
+    out: list[str] = []
+    for path, removed, added in hs:
+        for r in removed:
+            for m in {x.lower() for x in HEDGE.findall(r)}:
+                if not any(m in a.lower() for a in added) and path not in dated:
+                    out.append(f"{path}: removed hedge '{m}' with no new evidence entry: {r.strip()[:120]}")
+            am = ASSUMES.match(r)
+            if am and r.strip() not in added_all:
+                key = re.split(r"\s+(?:—|--)\s+", am.group(1), maxsplit=1)[0].strip()
+                if key not in settled:
+                    out.append(f"{path}: removed @assumes line for {key}, which is not proved or refuted: "
+                               f"the work still builds on it")
+        if path in staged and re.search(r"/C\d{3}-[^/]*\.md$", path):
+            changed = any(re.match(r"\s*(#\s*C\d{3}:|family:)", r) for r in removed)
+            broken = re.search(r"result:\s*(REFUTED|NARROWED)", staged[path])
+            repaired = any(re.match(r"\s*(?:[-*]\s*)?`?repair:`?\s*\S", a) for _, _, ad in hs for a in ad)
+            if changed and broken and not repaired:
+                out.append(f"{path}: the statement or family changed after a {broken.group(1)} entry, with no "
+                           f"`repair:` line saying what kind of repair it is and what content is left")
+        if not re.search(r"/C\d{3}-[^/]*\.md$", path):
+            for a in added:
+                for cid in set(CID.findall(a)):
+                    st = statuses.get(cid)
+                    m = STRONG.search(a)
+                    if st in RANK and m:
+                        word = m.group(1).lower()
+                        if (3 if word != "supported" else 2) > RANK[st]:
+                            out.append(f"{path}: calls {cid} '{word}' while the ledger has it {st}: {a.strip()[:100]}")
+        for a in added:
+            for m in ARGUED_LINE.finditer(a):
+                inner, rest = m.group(1), m.group(2) or ""
+                if "premises:" not in rest:
+                    out.append(f"{path}: ARGUED verdict without `premises:`: {a.strip()[:120]}")
+                if labels is not None:
+                    for lab in (x.strip() for x in inner.split("+")):
+                        base = re.split(r"[\s(]", lab, maxsplit=1)[0].lower()
+                        if base and base not in labels:
+                            out.append(f"{path}: ARGUED label '{base}' is not in project.toml [arguments] labels")
+    return out
+
+
+def ledger_statuses(root: Path) -> dict[str, str]:
+    try:
+        with open(root / "project.toml", "rb") as f:
+            rel = tomllib.load(f).get("conjectures", {}).get("dir", "")
+    except (OSError, tomllib.TOMLDecodeError):
+        rel = ""
+    d = root / rel if rel else None
+    out: dict[str, str] = {}
+    if d and d.is_dir():
+        for p in sorted(d.glob("C[0-9][0-9][0-9]-*.md")):
+            m = re.search(r"^status:\s*([a-z-]+)", p.read_text(encoding="utf-8", errors="replace"), re.M)
+            if m:
+                out[p.name[:4]] = m.group(1)
+    return out
+
+
+def run_diff(root: Path) -> int:
+    try:
+        r = subprocess.run(["git", "-C", str(root), "diff", "--cached", "-U0", "--no-color", "--no-ext-diff"],
+                           capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"hedge-scan --diff: cannot read the staged changes: {e}", file=sys.stderr)
+        return 0
+    diff = r.stdout.decode("utf-8", errors="replace")
+    statuses = ledger_statuses(root)
+    staged = {}
+    for path, _, _ in hunks(diff):
+        if re.search(r"/C\d{3}-[^/]*\.md$", path) and path not in staged:
+            g = subprocess.run(["git", "-C", str(root), "show", f":{path}"], capture_output=True, timeout=60)
+            staged[path] = g.stdout.decode("utf-8", errors="replace") if g.returncode == 0 else ""
+    settled = {k for k, v in statuses.items() if v in ("proved", "refuted")}
+    for f in diff_findings(diff, settled, label_words(root), statuses, staged):
+        print(f"hedge-scan --diff: {f}")
+    return 0
+
+
+def selftest() -> int:
+    doc = ("# The bound holds in general\n\nVerdict: proved for all n.\n\n"
+           "**This is settled.**\n\nIn the sampled range it holds.\n```\nalways\n```\n")
+    hits = scan(doc)
+    got = [(h[0], h[1]) for h in hits]
+    want = [("HEADER", 1), ("SUMMARY", 3), ("BOLD", 5), ("body", 7)]
+    if got != want:
+        print(f"selftest FAIL: {got} != {want}")
+        return 1
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "x.md"
+        p.write_text("nothing strong here\n")
+        if scan(p.read_text()):
+            print("selftest FAIL: false positive")
+            return 1
+    diff = (
+        "diff --git a/w/s.md b/w/s.md\n--- a/w/s.md\n+++ b/w/s.md\n@@ -3 +3 @@\n"
+        "-The bound holds heuristically for all n.\n+The bound holds for all n.\n"
+        "@@ -9 +9 @@\n-Morally the error is small.\n+Morally the error term is small.\n"
+        "@@ -12 +11,0 @@\n-@assumes: C002 — the lift holds — argued (heuristic)\n"
+        "-@assumes: C001 — proved one — argued (moral)\n"
+        "diff --git a/w/r.md b/w/r.md\n--- a/w/r.md\n+++ b/w/r.md\n@@ -0,0 +1,3 @@\n"
+        "+CLAIM: ARGUED (heuristic + model-only (ROM); premises: the random oracle)\n"
+        "+CLAIM: ARGUED (vibes; premises: none: a sketch)\n+CLAIM: ARGUED (moral)\n"
+        "diff --git a/led/C003-x.md b/led/C003-x.md\n--- a/led/C003-x.md\n+++ b/led/C003-x.md\n"
+        "@@ -5 +5,2 @@\n-Conjecturally true.\n+True on n <= 50.\n+- 2026-01-02 · check · n <= 50\n"
+    )
+    f = diff_findings(diff, {"C001"}, ["heuristic", "moral", "conditional", "model-only", "analogy"])
+    text = "\n".join(f)
+    checks = [
+        ("a removed hedge is reported", "removed hedge 'heuristically'" in text),
+        ("a hedge kept in the replacement is not", "'morally'" not in text),
+        ("a removed @assumes on an open claim is reported", "removed @assumes line for C002" in text),
+        ("a removed @assumes on a proved claim is not", "for C001" not in text),
+        ("combined labels with a model in parentheses pass", "'heuristic'" not in text and "'model-only'" not in text),
+        ("an unknown label is reported", "label 'vibes'" in text),
+        ("ARGUED without premises is reported", "without `premises:`" in text),
+        ("a new dated evidence entry excuses the hedge", "C003" not in text),
+    ]
+    for label, ok in checks:
+        if not ok:
+            print(f"selftest FAIL: {label}\n{text}")
+            return 1
+    if any("label" in x for x in diff_findings(diff, set(), None)):
+        print("selftest FAIL: with no [arguments] labels the label words are not checked")
+        return 1
+    d2 = ("diff --git a/led/C004-y.md b/led/C004-y.md\n--- a/led/C004-y.md\n+++ b/led/C004-y.md\n"
+          "@@ -1 +1 @@\n-# C004: every graph has a matching\n+# C004: every bipartite graph has a matching\n"
+          "diff --git a/w/sum.md b/w/sum.md\n--- a/w/sum.md\n+++ b/w/sum.md\n@@ -0,0 +1,3 @@\n"
+          "+So C004 is proved.\n+C005 is supported by the run.\n+C004 is not proved yet.\n")
+    staged = {"led/C004-y.md": "## Evidence\n- 2026-01-01 · red-team · result: REFUTED — K3\n"}
+    f2 = "\n".join(diff_findings(d2, set(), None, {"C004": "open", "C005": "supported"}, staged))
+    checks2 = [
+        ("a narrowing after REFUTED with no repair is reported", "changed after a REFUTED entry" in f2),
+        ("a copy stronger than the ledger is reported", "calls C004 'proved' while the ledger has it open" in f2),
+        ("a copy matching the ledger is not", "C005" not in f2),
+        ("'not proved' is not a strong claim", f2.count("C004 'proved'") == 1),
+    ]
+    for label, ok in checks2:
+        if not ok:
+            print(f"selftest FAIL: {label}\n{f2}")
+            return 1
+    d3 = d2.replace("+So C004 is proved.\n", "+repair: lemma-incorporation — bipartite only\n")
+    if "changed after" in "\n".join(diff_findings(d3, set(), None, {"C004": "open"}, staged)):
+        print("selftest FAIL: a repair: line excuses the narrowing")
+        return 1
+    print("hedge-scan selftest: ok")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("files", nargs="*")
+    ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--diff", action="store_true")
+    a = ap.parse_args(argv)
+    if a.selftest:
+        return selftest()
+    if a.diff:
+        return run_diff(Path(__file__).resolve().parent.parent)
+    if not a.files:
+        report("<stdin>", sys.stdin.read())
+        return 0
+    for f in a.files:
+        try:
+            report(f, Path(f).read_text(encoding="utf-8", errors="replace"))
+        except OSError as e:
+            print(f"hedge-scan: cannot read {f}: {e}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

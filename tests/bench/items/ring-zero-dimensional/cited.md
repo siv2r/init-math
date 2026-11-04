@@ -1,0 +1,3 @@
+- Chinese remainder theorem (Atiyah and Macdonald, Introduction to Commutative Algebra, Prop. 1.10): if a_1, ..., a_n are ideals of a commutative ring A that are pairwise coprime (a_i + a_j = A for i ≠ j), then A/(a_1 ∩ ... ∩ a_n) ≅ A/a_1 × ... × A/a_n.
+- The nilradical is the intersection of all prime ideals (Atiyah and Macdonald, Prop. 1.8).
+- Length is additive on short exact sequences of modules of finite length, and a module has finite length if and only if it satisfies both chain conditions (Atiyah and Macdonald, Prop. 6.8 and Prop. 6.9).

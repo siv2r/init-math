@@ -1,0 +1,18 @@
+# The statement is FALSE (true neighbour: {f != 0} has Lebesgue measure zero, since f = 0 at
+# every continuity point and D is null by Lebesgue's criterion).
+# The step fails: uniform limits of step functions are exactly the regulated functions (one-sided
+# limits at every point), a proper subclass of the Riemann integrable functions; Riemann's
+# criterion gives only step functions s <= f <= t with small integral of t - s.
+# Counterexample to the step and to the statement: f = indicator of the middle-thirds Cantor set K.
+# f is bounded with discontinuity set K (every point of K is a limit of points outside K; f is
+# locally 0 off K), K is null, so f is Riemann integrable; covering K by its 2^k level-k
+# intervals (total length (2/3)^k) gives upper sums below (2/3)^k + epsilon, so the integral over
+# [0, 1] is 0, and 0 <= integral from 0 to x of f <= 0 for all x. At a point of K
+# that is not an endpoint of a removed interval, f has no one-sided limit, so f is not a uniform
+# limit of step functions; and {f != 0} = K is uncountable.
+# The Thomae remark is correct (Thomae's function is regulated, so it does not expose the step).
+kind = "flawed"
+error_class = "statement perturbation: 'measure zero' nudged to 'countable', via a false characterization of Riemann integrability"
+location = "Step 2: 'Since f is Riemann integrable on [0, 1], it is a uniform limit of step functions'"
+catch = "says a Riemann integrable function need not be a uniform limit of step functions (those are the regulated functions; the integrability criterion only gives step functions s <= f <= t with small integral of t - s), so D need not be countable; ideally gives the indicator of the Cantor set, which is Riemann integrable with all integrals from 0 to x equal to 0, has no one-sided limits at most points of the Cantor set, and is nonzero on an uncountable set"
+audited = "2026-10-28, Claude Fable 5.1: Cantor-indicator counterexample re-derived (integrable, integrals 0, nonzero on an uncountable set, not regulated); Step 1 and the Thomae remark checked; Rudin 6.6/6.20/7.11 statements checked"

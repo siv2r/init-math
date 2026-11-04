@@ -1,0 +1,7 @@
+## Usage statistics
+
+{{#if view.coordinator}}
+- A hook copies token **counts** (never text) per model and agent role from the harness's session record into `logs/usage.jsonl` at each end of turn; nothing to do by hand.
+- **Before proposing a model-tier or delegation change, look at `bin/usage-report`** (e.g. `--by role`, `--since <date>`): argue from the measured main-thread vs subagent split, not from impressions.
+- What is recorded, how to read it, how to switch it off: [docs/discipline/usage.md](docs/discipline/usage.md).
+{{/if}}

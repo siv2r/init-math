@@ -1,0 +1,152 @@
+# Review gates and claim strength
+
+The procedure (who runs, in what order) is the `gate-chain` skill. This page explains why,
+and holds the self-audit you do before any reviewer sees the text.
+
+## Why fresh-context reviewers{{#if modules.attempts}} (principle: fresh-context-review){{/if}}
+
+The author of a finding is the worst-placed reader of it. They know what every undefined
+symbol means, they remember the evidence the text forgot to cite, and they read the hedge
+into a headline that does not carry it. A reviewer started with fresh context has none of
+that. It reads what is on the page.
+
+So the brief keeps the history out: no author's name, no failed attempts, no author's
+confidence, no earlier verdict. Models switch from right answers to wrong ones after reading
+what peers concluded, and a famous name makes an argument more persuasive to mathematicians.
+The brief does carry what the reviewer cannot get for itself: the intended reading of the
+question, and the exact statement of each result a proof cites, since a citation can name a
+real paper for a result it does not contain, or a theorem whose hypotheses fail here.
+
+The reviewers are **orthogonal**: each asks one different question, and a document can pass
+one while failing another.
+
+- `claim-auditor`: does each conclusion follow from the evidence the text cites, at the
+  scope it states? (Logic, not truth.)
+- `proof-referee`: is the proof rigorous and readable, and is its load-bearing step right?
+- `red-team`: is the claim true? It hunts the cheapest counterexample.
+
+A reviewer is a strong-tier model, never weaker than the author it reviews, because a gate
+that misses things is worse than no gate: it turns a guess into a recorded result.
+
+## Which verdict passes, per reviewer
+
+Every reviewer ends with a verdict word. Only the passing word lets you proceed{{#if modules.commit_gate}} (and
+only that word satisfies the commit gate; stamp the others too, as the review history){{/if}}.
+Any other word means: apply the fixes the reviewer listed, then dispatch it again on the
+revised text, up to the re-review limit: three reviews of one document by one reviewer per
+cycle (the `gate-chain` skill). At the limit, record the claim at the strength the last
+review supports, with its open issues listed, and propose nothing above it. One narrower
+case: an argued claim kept as evidence{{#if modules.conjectures}} (at or below weakly-supported){{/if}} gets one claim-auditor pass;
+apply its fixes and record, with its verdict noted in the work folder's README and any point
+left open in the file. Re-dispatch only if you changed the claim beyond the auditor's own fixes{{#if modules.commit_gate}}; recording evidence
+needs no stamp (the commit gate asks for one only when a status changes){{/if}}.
+**Why:** past a few rounds, review buys little: in test runs repeated rounds reached fifteen
+reviewer calls on one heuristic without changing its verdict. A claim recorded with its open
+issues listed is honest; one reviewed until a reviewer gives up is not.
+
+**Every report from the `claim-auditor`, the `proof-referee` or the `red-team`** lists each
+issue as `<location> — <what is wrong> — <why it fails> — <the fix>`, marked **major** or
+**minor**: minor only if an expert could fix it without anyone reviewing the fix (the
+`red-team` lists issues this way when its verdict is not `SURVIVED`).{{#if modules.readers}} The
+reader reviewers list issues in their own report forms, without a severity.{{/if}} A `proof-referee` `CLEAN-MINOR` lists minor points and no major one:
+apply them, with no second review; `CLEAN` means nothing is left to fix.{{#if modules.readers}} A `cold-reader`
+`SELF-CONTAINED-MINOR` works the same way: every hit is a definition, gloss or forward
+reference; apply them, with no second review.{{/if}} No verdict carries a confidence figure: a model's stated
+confidence predicts its own failures barely better than chance.
+
+| Reviewer | Passing verdict | Other verdicts (fix, then re-dispatch) |
+|---|---|---|
+| `claim-auditor` | `SOUND` | `OVER-CLAIMED`, `UNSUPPORTED`, `INCONSISTENT` |
+| `proof-referee` | `CLEAN`, `CLEAN-MINOR` | `NEEDS-WORK` |
+| `red-team` | `SURVIVED` | `REFUTED`, `NARROWED`, `INCONCLUSIVE` |
+{{#if modules.readers}}
+| `cold-reader` | `SELF-CONTAINED`, `SELF-CONTAINED-MINOR` | `NEEDS-CONTEXT` |
+| `expositor` | `READER-READY` | `NEEDS-WORK` |
+| `provenance` | `ATTRIBUTION-CLEAN` | `NEEDS-CITATIONS` |
+{{/if}}
+{{#if modules.questions}}
+| `tie-auditor` | `TIED` (on its `OVERALL:` line) | `WEAK/strength`, `WEAK/tie`, `TOPIC-MATCH` |
+{{/if}}
+{{#if modules.firsthand}}
+| `lit-search` | none: it returns a report (`BOTTOM LINE`, `FINDINGS`) | check its citations yourself before using them |
+{{/if}}
+
+`NARROWED` from the `red-team` means the claim held but the evidence is thinner than stated:
+weaken the claim to what it supports, then ask again.
+{{#if modules.questions}}
+The `tie-auditor` reviews a task's question tie before the task is dispatched, not a
+finding; it is listed so all the verdict words are in one place.
+{{/if}}
+{{#if modules.conjectures}}
+
+Which of these a conjecture status change needs is the status-authority table in
+[conjecture-ledger.md](conjecture-ledger.md#who-sets-a-status-and-what-must-exist-before-the-commit-status-authority).
+{{/if}}
+
+## Where staging documents live
+
+A reader-facing write-up is drafted from an internal staging document: the plain record of
+what was found, with every hedge. Keep it next to the work it records: in the line of
+work's folder `work/<slug>/`{{#if modules.experiments}}, or `experiments/<slug>/analysis.md`{{/if}}, separate from
+the write-up. It is the honesty record the write-up is checked against.
+
+## Why this order
+
+Cheapest first, and one at a time on a document, because each stage's fixes change what
+the next stage should read. The scans (`bin/hedge-scan`, `bin/define-check`,
+`bin/math-hygiene-scan`) cost seconds and remove the mechanical noise a reviewer would
+otherwise spend its effort on. The claim-auditor runs before the red-team because scope
+errors are cheaper to find than counterexamples, and a red-team pass on an over-scoped text
+attacks the wrong statement.
+
+## Why promotion takes two steps and the owner
+
+A status change is drift-prone: the same claim appears in several places, and a partial
+edit leaves the text contradicting itself. So the claim-auditor must pass the new wording
+first, then the red-team must fail to break it. Only then does the agent propose the change.
+The owner makes it, because a promoted claim is what the project builds on next.
+
+## The claim-strength self-audit (before you write a status or a verdict)
+
+Answer these in the entry itself.
+
+1. **Rigorous invariant or proxy?** Does the verdict rest on an exact structural fact (a
+   closed form, a proof, an exhaustive check) or on a finite, sampled or narrow proxy? If an
+   exact invariant exists, make it the verdict and demote the proxy to a bounded cross-check.
+   Do not tune a fragile proxy until it agrees; that inverts which instrument you trust.
+2. **Name the scope gap.** State exactly what the evidence covers and what the claim
+   asserts. One family, one mechanism or one parameter window is not "in general".
+3. **Proposing a new invariant or reframing? Measure the target.** Before recording that a
+   cheap quantity determines an expensive one, measure the expensive one directly on at least
+   one adversarial case. A proxy that is cheap to falsify must be falsified first, not
+   asserted and hedged.
+4. **Is the sample capped or chosen for convenience?** A cost cap does not drop cases at
+   random: it drops the extreme ones first (the largest, slowest, most degenerate). A rate,
+   trend or "always" estimated from the cases that finished is biased toward the cheap ones
+   and can reverse when the cap rises. Name what the cap dropped; probe one dropped case if
+   it is cheap. Not needed for a genuinely exhaustive or random sample.
+
+When the chain is long or the conclusion feels more confident than the evidence, do not
+stop at the self-audit: run the `claim-auditor`.
+
+## A proof of a stronger statement is not a proof of the target
+
+When the deliverable is a proof of a specific statement X, a proof of a stronger Y that
+implies X only through a step nobody has proved (a "standard" inclusion, an asserted
+bridge) is not progress on X. Lead with X itself; label the stronger statement as an
+optional simplification, not the result.
+
+Why: it is easy to declare victory on the surrogate while the step that actually connects
+it to X stays open.
+
+Anti-scope: using a more general result to simplify the proof of X is encouraged; this rule
+does not apply when Y is itself the agreed goal, or when the bridge from Y to X is proved.
+
+## The load-bearing steps
+
+Most proofs stand on one condition, some on two or three: which map exists, which
+decomposition holds, which identity is invoked. A review pass can check every routine step
+and still wave one of them through as subtly the wrong object. So the proof-referee
+re-derives them first (at most three; in a long chain of equally delicate estimates, the
+three riskiest, naming the rest), and so should the author: before building a long
+write-up on a proof, re-derive each crux in a few lines yourself. A reviewer's "sound, crux included" does not replace that.

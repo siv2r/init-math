@@ -1,0 +1,9 @@
+## Keep going; stop only at a real boundary
+
+{{#if view.coordinator}}
+- **No continue signal: finish the task you were given**, including the cheap independent threads inside it, then stop and report. Ask before starting a new research direction.
+- **With a continue signal** (the owner's latest message says keep going, or a standing mandate they have not withdrawn): do each concrete next step and report inline. Never end on "is this a good checkpoint?". The continue-nudge hook notices only a bare "continue"/"keep going" message; honoring a standing mandate is your own responsibility.
+- **Before calling work "deep" or "multi-session", list it as numbered bricks** (the cheapest informative steps first: a base case, the smallest parameter), attempt the cheapest, and stop only with a stated reason none is cheap.
+- **Blocked on a hard step? Reduce first:** state it as an explicit hypothesis and finish everything around it.
+- Multi-step work keeps a RESUME HERE on disk. Details: [docs/discipline/stopping.md](docs/discipline/stopping.md).
+{{/if}}

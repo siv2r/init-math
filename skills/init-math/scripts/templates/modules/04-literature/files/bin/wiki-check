@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""wiki-check: find sources that were put in wiki/raw/ but never ingested.
+
+A source is ingested when the next reader can use it without opening it again (the
+`ingest` skill). Two ways that goes wrong, both checked for every wiki/raw/<file>.md
+(`_index.md` skipped):
+
+  * not synthesized: no concept article (wiki/concepts/) and no known-result entry
+    (wiki/known-results/) cites it. A reading list in wiki/references/ does not count;
+    it collects sources, it does not say what we take from them;
+  * a pointer without a reason: frontmatter `kind: pointer` with no `pointer-reason:`,
+    or no `kind:` at all (`kind: text` when the file holds the source's text).
+
+A source deliberately left unsynthesized goes in .wikiignore at the project root, one file
+name per line ("#" starts a comment), with the reason in a comment.
+See docs/discipline/literature-wiki.md.
+
+Exit 1 if anything is found, else 0. No wiki/raw/ folder: nothing to check.
+
+selftest: yes
+usage: bin/wiki-check   |   --selftest
+"""
+from __future__ import annotations
+
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SYNTH = ("wiki/concepts", "wiki/known-results")
+
+
+def frontmatter(text: str) -> dict[str, str]:
+    if not text.startswith("---\n"):
+        return {}
+    end = text.find("\n---", 4)
+    if end < 0:
+        return {}
+    meta = {}
+    for line in text[4:end].splitlines():
+        key, sep, val = line.partition(":")
+        if sep and key.strip():
+            meta[key.strip()] = val.strip()
+    return meta
+
+
+def ignores(root: Path) -> set[str]:
+    try:
+        lines = (root / ".wikiignore").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+    return {ln.split("#", 1)[0].strip() for ln in lines} - {""}
+
+
+def check(root: Path) -> list[str]:
+    raw = root / "wiki" / "raw"
+    if not raw.is_dir():
+        return []
+    synth = ""
+    for rel in SYNTH:
+        d = root / rel
+        if d.is_dir():
+            synth += "\n".join(p.read_text(encoding="utf-8", errors="replace")
+                               for p in sorted(d.rglob("*.md")) if p.name != "_index.md")
+    skip = ignores(root)
+    out = []
+    for p in sorted(raw.glob("*.md")):
+        if p.name == "_index.md" or p.name in skip:
+            continue
+        meta = frontmatter(p.read_text(encoding="utf-8", errors="replace"))
+        kind = meta.get("kind", "")
+        if kind == "pointer" and not meta.get("pointer-reason"):
+            out.append(f"wiki/raw/{p.name}: a pointer with no `pointer-reason:` (why the text "
+                       "is not committed: license, paywall, binary)")
+        elif kind not in ("text", "pointer"):
+            out.append(f"wiki/raw/{p.name}: no `kind: text` or `kind: pointer` in its frontmatter")
+        if not re.search(rf"(?<![\w-]){re.escape(p.stem)}(?![\w-])", synth):
+            out.append(f"wiki/raw/{p.name}: not synthesized: no concept article or known-result "
+                       "cites it (the ingest skill, steps 2-3)")
+    return out
+
+
+def selftest() -> int:
+    bad = 0
+
+    def expect(label: str, root: Path, want: list[str]) -> None:
+        nonlocal bad
+        got = check(root)
+        ok = len(got) == len(want) and all(any(w in g for g in got) for w in want)
+        if not ok:
+            bad += 1
+            print(f"SELFTEST FAIL {label}: {got}")
+
+    with tempfile.TemporaryDirectory() as t:
+        root = Path(t)
+        expect("no wiki", root, [])
+        raw = root / "wiki" / "raw"
+        raw.mkdir(parents=True)
+        (raw / "_index.md").write_text("# Raw sources\n")
+        (root / "wiki" / "concepts").mkdir()
+        (root / "wiki" / "references").mkdir()
+        (raw / "smith-2020.md").write_text("---\ntitle: S\nkind: text\n---\nThe text.\n")
+        expect("text, unsynthesized", root, ["smith-2020.md: not synthesized"])
+        (root / "wiki" / "references" / "reading.md").write_text("[S](../raw/smith-2020.md)\n")
+        expect("a reading list is not a synthesis", root, ["smith-2020.md: not synthesized"])
+        (root / "wiki" / "concepts" / "idea.md").write_text("## Sources\n- [S](../raw/smith-2020.md)\n")
+        expect("synthesized", root, [])
+        (raw / "jones-2021.md").write_text("---\ntitle: J\nkind: pointer\n---\nRead section 2.\n")
+        (raw / "smith-2020-v2.md").write_text("---\ntitle: S2\n---\nx\n")
+        expect("pointer without reason; no kind; a longer name is not cited by its prefix",
+               root, ["jones-2021.md: a pointer with no", "jones-2021.md: not synthesized",
+                      "smith-2020-v2.md: no `kind:", "smith-2020-v2.md: not synthesized"])
+        (raw / "jones-2021.md").write_text(
+            "---\ntitle: J\nkind: pointer\npointer-reason: paywalled\n---\nThm 2.1 (p. 4): ...\n")
+        (root / ".wikiignore").write_text("smith-2020-v2.md  # superseded, kept for the record\n"
+                                          "jones-2021.md\n")
+        expect("reason given; ignored files", root, [])
+    print(f"wiki-check selftest: {'ok' if not bad else f'{bad} failed'}")
+    return 1 if bad else 0
+
+
+def main(argv: list[str]) -> int:
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return 0
+    if "--selftest" in argv:
+        return selftest()
+    found = check(ROOT)
+    for f in found:
+        print(f)
+    print(f"wiki-check: {len(found)} problem(s)")
+    return 1 if found else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

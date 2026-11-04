@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""orphan-check: find artifacts on disk that no index points to.
+
+The other direction from link-check: a question, conjecture, known result, experiment or
+work folder whose directory index (_index.md) never mentions it is invisible to the next agent. For
+each store that exists, every artifact must be named in the store's _index.md (by its file
+stem / directory name, or by its id such as C004). Files and directories starting with "_"
+or ".", TEMPLATE* and README* are skipped. Intentional orphans go in .orphanignore at the
+project root, one per line: "slug" or "store:slug" ("#" starts a comment).
+See docs/discipline/scans.md.
+
+Exit 1 if any orphan is found, else 0. Stores that do not exist are skipped.
+
+selftest: yes
+usage: bin/orphan-check [store ...] [--porcelain]   |   --list   |   --selftest
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+STORES = {  # name -> (directory, artifact kind)
+    "questions": ("wiki/questions", "file"),
+    "conjectures": ("wiki/conjectures", "file"),
+    "known-results": ("wiki/known-results", "file"),
+    "experiments": ("experiments", "dir"),
+    "work": ("work", "dir"),
+}
+ID_RE = re.compile(r"^([CQ]\d{3})-")
+
+
+def configured_dirs(root: Path) -> dict[str, str]:
+    """[questions] dir and [conjectures] dir from project.toml, else the defaults."""
+    try:
+        cfg = tomllib.loads((root / "project.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        cfg = {}
+    return {"questions": str(cfg.get("questions", {}).get("dir", "wiki/questions")),
+            "conjectures": str(cfg.get("conjectures", {}).get("dir", "wiki/conjectures"))}
+
+
+def stores(root: Path) -> dict[str, tuple[str, str]]:
+    dirs = configured_dirs(root)
+    return {name: (dirs.get(name, rel), kind) for name, (rel, kind) in STORES.items()}
+
+
+def skipped(name: str) -> bool:
+    return name.startswith(("_", ".")) or name.upper().startswith(("TEMPLATE", "README"))
+
+
+def ignores(root: Path) -> set[str]:
+    try:
+        lines = (root / ".orphanignore").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+    return {ln.split("#", 1)[0].strip() for ln in lines} - {""}
+
+
+def mentioned(token: str, text: str) -> bool:
+    return re.search(rf"(?<![\w-]){re.escape(token)}(?![\w-])", text) is not None
+
+
+def orphans(root: Path, names: list[str]) -> list[tuple[str, str]]:
+    ign, out, table = ignores(root), [], stores(root)
+    for name in names:
+        rel, kind = table[name]
+        d = root / rel
+        if not d.is_dir():
+            continue
+        try:
+            index = (d / "_index.md").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            index = ""
+        for p in sorted(d.iterdir()):
+            if skipped(p.name):
+                continue
+            if kind == "file" and not (p.is_file() and p.suffix == ".md"):
+                continue
+            if kind == "dir" and not p.is_dir():
+                continue
+            slug = p.stem if kind == "file" else p.name
+            if slug in ign or f"{name}:{slug}" in ign:
+                continue
+            idm = ID_RE.match(slug)
+            if mentioned(slug, index) or (idm and mentioned(idm.group(1), index)):
+                continue
+            out.append((name, f"{rel}/{p.name}"))
+    return out
+
+
+def selftest() -> int:
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        c = root / "wiki" / "conjectures"
+        c.mkdir(parents=True)
+        for n in ("C001-a.md", "C002-b.md", "C003-c.md", "_index.md", "TEMPLATE.md"):
+            (c / n).write_text("x\n")
+        (c / "_index.md").write_text("| [C001](C001-a.md) | open |\n| C002 | open |\n")
+        e = root / "experiments"
+        (e / "sweep-small").mkdir(parents=True)
+        (e / "sweep-big").mkdir()
+        (e / "TEMPLATE").mkdir()
+        (e / "_index.md").write_text("- sweep-small: done\n")
+        (root / ".orphanignore").write_text("# intentional\nexperiments:sweep-big\n")
+        got = orphans(root, list(STORES))
+        if got != [("conjectures", "wiki/conjectures/C003-c.md")]:
+            print(f"selftest FAIL: {got}")
+            return 1
+        # a store relocated in project.toml is read from its configured directory
+        (root / "project.toml").write_text('[conjectures]\ndir = "notes/conj"\n')
+        moved = root / "notes" / "conj"
+        moved.mkdir(parents=True)
+        (moved / "C009-z.md").write_text("x\n")
+        got = orphans(root, ["conjectures"])
+        if got != [("conjectures", "notes/conj/C009-z.md")]:
+            print(f"selftest FAIL (configured dir): {got}")
+            return 1
+    print("orphan-check selftest: ok")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("stores", nargs="*", help=f"any of: {', '.join(STORES)} (default: all)")
+    ap.add_argument("--list", action="store_true", help="show the stores and whether each exists")
+    ap.add_argument("--porcelain", action="store_true", help="one 'store<TAB>path' per orphan")
+    ap.add_argument("--selftest", action="store_true")
+    a = ap.parse_args(argv)
+    if a.selftest:
+        return selftest()
+    if a.list:
+        for name, (rel, kind) in stores(ROOT).items():
+            state = "present" if (ROOT / rel).is_dir() else "absent"
+            print(f"{name:14} {rel}/ ({kind}s) {state}")
+        return 0
+    bad = [s for s in a.stores if s not in STORES]
+    if bad:
+        ap.error(f"unknown store(s): {', '.join(bad)}")
+    found = orphans(ROOT, a.stores or list(STORES))
+    for store, path in found:
+        print(f"{store}\t{path}" if a.porcelain else f"orphan: {path} is not named in its _index.md")
+    if not a.porcelain:
+        print(f"orphan-check: {len(found)} orphan(s)." + (
+            " Add an index row in the same commit, or list it in .orphanignore." if found else ""))
+    return 1 if found else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,82 @@
+# Worker handoff: <one line naming the brick list>
+
+RUN ON: worker tier ({{tiers.worker}}). Why this tier: <the bricks are fully specified;
+no route choices remain>. Use this template only while the owner ({{owner}}) is present. For an
+unattended stretch, write a coordinator brief instead
+([dispatcher-brief.md](dispatcher-brief.md)), so that escalations go to a coordinator.
+
+Continuation mode: work through the bricks in order, reporting each one inline as it
+lands. Stop only at an escalation trigger (below) or when the list is done.
+
+## Already landed (do not redo)
+
+<files, commits, results, each with where it is recorded>
+
+{{#if modules.questions}}
+## Question tie
+
+```
+question: Q<nnn> / A<n>
+via: C<nnn>
+kind: <decides | narrows | mechanism | instruments | transfer>
+outcomes:
+- if <outcome> -> <what changes in the answer>
+- if <failure outcome> -> <what changes>
+bridge: if <result on A> then <step of B> because <mechanism>     (transfer only; delete otherwise)
+consumer: {{#if modules.experiments}}C<nnn> @residue | experiments/<slug>{{else}}C<nnn> @residue{{/if}}     (instruments only; delete otherwise)
+```
+
+{{/if}}
+## Front-loaded facts
+
+<verified facts the bricks rely on, each with how it was checked>
+
+## Bricks
+
+Known (from the literature pass): <facts, conventions and named techniques the bricks rely
+on, each sourced; the status of the problem only as a fact, e.g. "no proof is recorded in the
+sources searched on <date>">
+Sub-goal: <the concrete statement to prove, construct or refute>
+
+1. <brick: statement or deliverable, file, finish line, the check that proves it done>
+2. <...>
+
+Per-brick ritual: do the brick, run its check, commit it with an explicit path list,
+note it in the progress log if there is one, then start the next.
+
+## Return for direction (mandatory triggers)
+
+Stop and return NEED-DIRECTION when (an attempt is one edit-plus-check cycle): the same
+goal fails 3 attempts; the same error survives 2 attempts unchanged (whichever of these
+two comes first); there is a route choice the list did not make; something needed
+is missing after one search; a known-answer check still fails after 1 fix; a resource limit
+trips; a result contradicts this handoff or the records; or you are about to write a
+judgment of difficulty or scope.
+
+```
+NEED-DIRECTION (<this handoff>, brick <k>)
+TRIGGER: <which, and the exact symptom>
+STATE: <files, last error, last output>
+TRIED: <one line per attempt, saying where it broke>
+ROUTES I SEE: <options; do NOT pick one>
+EVERYTHING ELSE LANDED: <yes, or what is open>
+CLAIM: <proof or construction bricks only: NOT-PROVED | NONE (escalated: <trigger>)>
+```
+
+A `DONE` on a proof or construction brick adds `CLAIM: PROVED | COUNTEREXAMPLE`; a `PARTIAL`
+adds `CLAIM: GAPS (core: <list>; routine: <list>)` or, for an argument that convinces but
+has a non-deductive step or an open premise, `CLAIM: ARGUED (<labels>; premises: <list>)` with
+the short form in the worker charter; and its `TRIED:` lines. Attempt first; abstain after,
+never instead. A `DONE` that establishes a result, or a brick where a structure emerged (a closed
+form, a recurrence, a pattern), adds `FRAMING: <what it resembles or may be known as:
+candidate names to search, or none>`; the coordinator searches them before building on it.
+
+## Discipline
+
+- Do not start a long job (over about two minutes); return its command instead.
+- Do not write durable records of findings; return them.
+- Absolute paths in every command.
+
+## First move
+
+<the first concrete action>

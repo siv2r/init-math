@@ -1,0 +1,14 @@
+# The statement is FALSE (it holds when every x in X has finite degree; that is the hypothesis
+# that makes the compactness argument work).
+# The step fails: König's infinity lemma needs each V_n finite. V_n is infinite as soon as some
+# N(x_i), i <= n, is infinite, and then a ray need not exist.
+# Counterexample: X = {x_0, x_1, x_2, ...}, Y = {y_1, y_2, ...}; x_0 is adjacent to every y_j and
+# x_i (i >= 1) only to y_i. A finite A in X has |N(A)| = |A| if x_0 is not in A and N(A) = Y
+# (infinite) otherwise, so the hypothesis holds; but if x_0 is matched to y_j then x_j has no
+# partner, so no matching covers X. In the proof (enumerating x_0 first), the element of V_1
+# sending x_0 to y_j has extensions only up to level j, so H has no ray.
+kind = "flawed"
+error_class = "misapplied result: König's infinity lemma used where the levels are infinite"
+location = "the application of König's infinity lemma to the levels V_n of the graph H"
+catch = "says König's infinity lemma requires each level V_n to be finite, which fails when some vertex of X has infinitely many neighbours (then V_n is infinite and H need not have a ray); ideally gives the counterexample x_0 adjacent to all y_j and x_i adjacent only to y_i, which satisfies Hall's condition for finite sets but has no matching covering X"
+audited = "2026-10-28, Claude Fable 5.1: counterexample (x_0 adjacent to all y_j, x_i to y_i) checked against Hall for finite sets and against the levels V_n; Koenig's lemma hypothesis (finite levels) is the only step that fails; Diestel 8.1.2 and Halmos-Vaughan statements checked"

@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""heartbeat: run a command, print a progress line every TICK seconds, and flag a stall.
+
+    bin/heartbeat [--tick S] [--stall S] [--kill-on-stall] [--log FILE] -- CMD [ARGS...]
+
+The command's output passes through unchanged (stdout and stderr merged). Every TICK
+seconds a line `[heartbeat] elapsed=... last: <last output line>` goes to stderr, so a
+long run is never silent. If the command prints nothing new for STALL seconds, a
+`[heartbeat] STALL` line is printed; with --kill-on-stall the command is stopped and
+heartbeat exits 125. Otherwise heartbeat exits with the command's own exit code.
+
+Defaults: --tick 30 (env HB_TICK_S), --stall 300 (env HB_STALL_S), --log none (env HB_LOG).
+selftest: yes
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+STALL_EXIT = 125
+
+
+def _fmt(sec: float) -> str:
+    s = int(sec)
+    return f"{s // 3600}h{s % 3600 // 60:02d}m{s % 60:02d}s" if s >= 3600 else f"{s // 60}m{s % 60:02d}s"
+
+
+def run(cmd: list[str], tick: float, stall: float, kill_on_stall: bool, log: str | None) -> int:
+    start = time.monotonic()
+    state = {"last": "", "t": start}
+    logf = open(log, "a", encoding="utf-8") if log else None
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except OSError as e:
+        print(f"[heartbeat] cannot start {cmd[0]!r}: {e}", file=sys.stderr)
+        return 127
+
+    def reader():
+        assert proc.stdout is not None
+        for raw in iter(proc.stdout.readline, b""):
+            line = raw.decode("utf-8", errors="replace")
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            if logf:
+                logf.write(line)
+                logf.flush()
+            if line.strip():
+                state["last"] = line.strip()[:160]
+            state["t"] = time.monotonic()
+
+    th = threading.Thread(target=reader, daemon=True)
+    th.start()
+    next_tick = start + tick
+    stalled = False
+    while proc.poll() is None:
+        time.sleep(min(0.1, tick))
+        now = time.monotonic()
+        quiet = now - state["t"]
+        if quiet >= stall and not stalled:
+            stalled = True
+            print(f"[heartbeat] STALL: no output for {_fmt(quiet)} (elapsed {_fmt(now - start)})",
+                  file=sys.stderr, flush=True)
+            if kill_on_stall:
+                proc.terminate()
+                try:
+                    proc.wait(5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                th.join(2)
+                print("[heartbeat] stopped the command after a stall", file=sys.stderr, flush=True)
+                return STALL_EXIT
+        elif quiet < stall:
+            stalled = False
+        if now >= next_tick:
+            print(f"[heartbeat] elapsed={_fmt(now - start)} last: {state['last']}",
+                  file=sys.stderr, flush=True)
+            next_tick = now + tick
+    th.join(2)
+    if logf:
+        logf.close()
+    return proc.returncode
+
+
+def selftest() -> int:
+    py = sys.executable
+    me = os.path.abspath(__file__)
+    with tempfile.TemporaryDirectory() as d:
+        log = os.path.join(d, "out.log")
+        r = subprocess.run([py, me, "--tick", "0.2", "--stall", "30", "--log", log, "--",
+                            py, "-c", "import time,sys\nfor i in range(3):\n print('step',i,flush=True); time.sleep(0.3)\nsys.exit(3)"],
+                           capture_output=True, text=True, timeout=30)
+        assert r.returncode == 3, ("exit code not propagated", r.returncode, r.stderr)
+        assert "step 2" in r.stdout, r.stdout
+        assert "[heartbeat] elapsed=" in r.stderr, r.stderr
+        assert "step 1" in open(log).read()
+        r = subprocess.run([py, me, "--tick", "0.2", "--stall", "0.5", "--kill-on-stall", "--",
+                            py, "-c", "import time; print('start', flush=True); time.sleep(20)"],
+                           capture_output=True, text=True, timeout=30)
+        assert r.returncode == STALL_EXIT, ("stall not caught", r.returncode, r.stderr)
+        assert "STALL" in r.stderr, r.stderr
+    print("heartbeat selftest: ok")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["--selftest"]:
+        return selftest()
+    ap = argparse.ArgumentParser(prog="heartbeat", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--tick", type=float, default=float(os.environ.get("HB_TICK_S", 30)))
+    ap.add_argument("--stall", type=float, default=float(os.environ.get("HB_STALL_S", 300)))
+    ap.add_argument("--kill-on-stall", action="store_true")
+    ap.add_argument("--log", default=os.environ.get("HB_LOG") or None)
+    ap.add_argument("--selftest", action="store_true", help="run the built-in check")
+    ap.add_argument("cmd", nargs=argparse.REMAINDER, help="-- CMD [ARGS...]")
+    a = ap.parse_args(argv)
+    cmd = a.cmd[1:] if a.cmd[:1] == ["--"] else a.cmd
+    if not cmd:
+        ap.error("no command given (put it after --)")
+    return run(cmd, a.tick, a.stall, a.kill_on_stall, a.log)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

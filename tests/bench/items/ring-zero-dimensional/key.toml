@@ -1,0 +1,13 @@
+kind = "flawed"
+error_class = "hidden hypothesis: the layers N^j/N^(j+1) finitely generated (R Noetherian) used but not assumed"
+location = "the step 'So Q_j is a semisimple module, a direct sum of copies of the simple modules k_1, ..., k_r, and therefore has finite length as an R-module.'"
+catch = "says that a semisimple module has finite length only if it is a finite direct sum, i.e. finitely generated; the proof silently assumes each Q_j = N^j/N^(j+1) is finitely generated (true if R is Noetherian, not otherwise); ideally the counterexample R = F2[x_1, x_2, ...]/(x_i x_j : all i, j), whose only prime is m = (x_1, x_2, ...), with m^2 = 0, but Q_1 = m is an infinite-dimensional F2-space and (x_1, x_2, ...) ⊋ (x_2, x_3, ...) ⊋ ... never stabilizes"
+audited = "2026-10-28, Claude Fable 5.1: counterexample F2[x_1,x_2,...]/(x_i x_j) re-derived by hand (unique prime m, m^2 = 0, strictly descending chain); semisimple-implies-finite-length is the only defect; A&M 1.8/1.10/6.8/6.9 checked"
+# The statement is FALSE (true neighbour: a Noetherian ring of dimension 0 is Artinian; the
+# added hypothesis 'nilradical nilpotent' does not replace Noetherian).
+# Counterexample check by hand: in R = F2[x_1, x_2, ...]/(x_i x_j), every x_i is nilpotent, so
+# every prime contains m = (x_1, x_2, ...), and R/m = F2, so m is the unique prime, maximal.
+# m^2 = 0. R = F2 + m with m = F2-span of the x_i and R x_j = F2 x_j, so the ideal (x_k, x_(k+1), ...)
+# is the span of x_k, x_(k+1), ..., and these ideals strictly decrease: R is not Artinian.
+# Every other step (CRT, the idempotent decomposition, additivity of length, finite length
+# implies DCC) is correct. Any finite ring is Artinian, so no finite check refutes the claim.

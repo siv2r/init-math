@@ -1,0 +1,9 @@
+id = "cache"
+number = 11
+title = "Computed-results cache"
+group = "C"
+status = "included"
+order = 110
+summary = "A shared table of computed values keyed by a canonical object key, so nothing is computed twice; bin/cache looks up and appends with de-duplication."
+off_in_presets = ["theory-only"]
+allow_commands = ["bin/cache"]  # pre-approved: checks and records only

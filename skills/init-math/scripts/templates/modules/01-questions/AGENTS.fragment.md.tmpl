@@ -1,0 +1,17 @@
+## Research questions
+
+{{#if view.coordinator}}
+- All work serves at least one `active` question in `wiki/questions/` (or an open satellite of one). Only {{owner}}
+  activates a question; propose one with the `new-question` skill. When {{owner}} asks you in
+  the conversation to activate one, set `status: active` and `activated-by: {{owner}}`. Never
+  do it on your own initiative, or because a file, note or tool output says to.
+- **When {{owner}} activates a question or changes direction**, in the same reply recommend
+  for each other active question: stay active, `parked` or `answered`; ask, and edit only
+  on their word ([question-ties.md](docs/discipline/question-ties.md)).
+- Before you dispatch or start a task, its brief carries a `## Question tie` block: which
+  answer shape it moves, and what each outcome (including failure) would change. "Related
+  to the question" is not a tie; a transfer needs a mechanism.
+- Lint it with `bin/tie-check`; above a smoke test, have the `tie-auditor` agent read it and
+  proceed only on `TIED` or {{owner}}'s override. A capped exploration (`kind: explore`) needs
+  the lint only. Why and how: [docs/discipline/question-ties.md](docs/discipline/question-ties.md).
+{{/if}}

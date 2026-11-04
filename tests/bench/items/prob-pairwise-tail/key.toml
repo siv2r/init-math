@@ -1,0 +1,14 @@
+# The statement is FALSE (the bound holds for mutually independent signs; Hoeffding).
+# The step fails: pairwise independence of the X_i does not make e^(lambda X_1), ...,
+# e^(lambda X_n) mutually independent, so E[prod] = prod E is unjustified for n >= 3.
+# Counterexample (checked by enumeration of the 8 outcomes): Y_1, Y_2, Y_3 independent uniform
+# signs; the 7 products prod_{i in T} Y_i over nonempty T in {1,2,3} are pairwise independent
+# uniform signs; S = 7 if all Y_i = 1 and S = -1 otherwise, so P(S >= 7) = 1/8 = 0.125 while
+# exp(-49/14) = 0.0302. Also n = 5 with (Y_1, Y_2, Y_3, Y_1 Y_2, Y_1 Y_3): pairwise independent,
+# P(S >= 5) = 1/8 > exp(-2.5) = 0.0821. With n = 7, E[e^(lambda S)] = (e^(7 lambda) + 7 e^(-lambda))/8,
+# which exceeds (cosh lambda)^7 (e.g. 137.4 vs 20.8 at lambda = 1), so the factorized value is wrong.
+kind = "flawed"
+error_class = "misapplied result: product rule for expectations needs mutual, not pairwise, independence"
+location = "the step E[e^(lambda S)] = E[e^(lambda X_1)] ... E[e^(lambda X_n)] = (cosh lambda)^n, justified by 'the factors are bounded functions of distinct variables X_i, hence independent'"
+catch = "says the factorization of E[e^(lambda S)] needs the X_i to be mutually independent, while the hypothesis gives only pairwise independence (which controls E[S^2] but not the exponential moment); ideally gives a counterexample such as the 7 pairwise independent signs prod_{i in T} Y_i (T a nonempty subset of {1,2,3}, Y_i independent signs), for which P(S = 7) = 1/8 > exp(-7/2)"
+audited = "2026-10-28, Claude Fable 5.1: 7 subset-products of 3 independent signs enumerated: pairwise independent, P(S >= 7) = 1/8 > exp(-3.5); E[e^S] = 137.4 vs cosh(1)^7 = 20.8; cosh bound and optimization re-derived; Durrett 2.1 statement checked"

@@ -1,0 +1,23 @@
+id = "usage"
+number = 21
+title = "Usage statistics"
+group = "E"
+status = "included"
+order = 210
+summary = "Token counts per model and per agent role, copied from the harness's own session records into logs/usage.jsonl as the work happens (counts only, never text), with a report for cost and model-tier decisions."
+depends = []
+
+allow_commands = ["bin/usage-report"]  # pre-approved: checks and records only
+
+[[hooks]]
+script = "hooks/usage-log.py"
+event = "Stop"
+
+[[hooks]]
+script = "hooks/usage-log.py"
+event = "SubagentStop"
+
+[[hooks]]
+script = "hooks/usage-log.py"
+event = "SessionEnd"
+harnesses = ["claude"]   # Codex 0.161 has no SessionEnd hook

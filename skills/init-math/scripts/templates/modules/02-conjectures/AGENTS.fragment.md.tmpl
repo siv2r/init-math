@@ -1,0 +1,15 @@
+## Conjecture ledger
+
+{{#if view.coordinator}}
+- One file per conjecture in `wiki/conjectures/`: a connection between properties on a
+  named family, tied to a question. Add one with the `new-conjecture` skill.
+{{/if}}
+{{#if view.coordinator}}
+- Status is not the backlog. A line `@residue: <next step>` in a conjecture file marks work
+  still to do; `bin/residues` lists them across all statuses. Keep refuted entries. Only {{owner}} writes `@priority`.
+{{/if}}
+{{#if view.shared}}
+- Work that uses an argued claim or an open premise carries `@assumes: <C<nnn> or the
+  argument file> — <the claim> — argued (<labels>)` where it uses it; `bin/residues --assumes` lists them.
+{{/if}}
+- Why and how: [docs/discipline/conjecture-ledger.md](docs/discipline/conjecture-ledger.md).

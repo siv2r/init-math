@@ -1,0 +1,2 @@
+- Existence of primitive roots modulo a prime (Ireland and Rosen, A Classical Introduction to Modern Number Theory, 2nd ed., Ch. 4, Theorem 1): for every prime p the group (Z/pZ)^× is cyclic.
+- Lagrange's theorem: the order of an element of a finite group divides the order of the group.

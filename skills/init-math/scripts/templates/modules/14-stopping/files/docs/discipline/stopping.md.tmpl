@@ -1,0 +1,151 @@
+# When to stop, and how to resume
+
+Agents stop too early more often than too late. Stopping is cheap (write a report, name a
+boundary); breaking the remaining work down and attempting it is effortful. Under a long
+context or a hard problem the cheap branch wins unless a rule pushes back. These rules
+push back. They are not "never stop": the last section says when stopping is right.
+
+## Terms used below
+
+- **Continue signal.** Either (a) the owner ({{owner}})'s most recent message says to keep
+  going ("continue", "keep going", "carry on"), or (b) a standing mandate from earlier in
+  the session ("keep going until you are blocked or done") that the owner has not withdrawn.
+- **No continue signal** (the default): finish the task you were given, doing the cheap
+  independent threads inside that task, then stop and report at its end. Ask before
+  starting a new research direction.{{#if modules.questions}} An open satellite of an active question
+  (`satellite_of:`, while `[questions] satellites = true`) is not a new direction.{{/if}}
+- **Design progress doc.** The `README.md` of the effort's work folder, `work/<slug>/` (see
+  [work-folders.md](work-folders.md)); for a long effort, fill it from the fuller
+  [design-progress-doc.md](../templates/design-progress-doc.md). It holds the plan, a
+  **RESUME HERE** section at the top (the exact next step, so a fresh session can continue
+  from the file alone) and a dated **progress log** at the bottom.
+
+## 1. A single specified next step: do it
+
+**Rule.** When there is a continue signal, the next step is concretely specified
+(you just wrote it down in a report, a docstring or a plan), and it is not a genuinely open
+problem, do the step and report progress inline. Do not end the turn to report.
+**Why:** a turn that ends with "next I would do X" costs the owner a round trip for a
+decision that was already made.
+**Anti-scope:** without a continue signal, finish the task you were given and stop there;
+ending at its end is fine.
+
+## 2. The deep-core gate (before saying "deep", "multi-week" or "multi-session"){{#if modules.attempts}} (principle: cheapest-instance){{/if}}
+
+**Rule.** Before any message that describes remaining work as a deep core, a large
+construction or a multi-session effort, you must:
+
+1. list the concrete sub-steps (bricks), each a stateable next step, **including the
+   cheapest informative steps**: a base case, the smallest parameter, a degenerate or
+   low-degree special case. Where small cases say little about the claim
+   (`small_cases_informative = false` in `[field_profile]` of project.toml, or
+   `small-cases: not-informative` on the target), the cheapest informative step is the one
+   that would falsify or narrow the plan instead;
+2. attempt the cheapest, and if it is cheap, keep going;
+3. present that list, never a monolith.
+
+When {{owner}} asked only for an assessment ("how hard would this be?"), step 2 is one
+attempt: the cheapest brick, then stop and answer with the list and what the attempt showed.
+
+A stop then needs a positive reason that no cheap brick remains, not merely "the rest is
+hard". **Why:** a "this feels multi-week" impulse is usually wrong once the work is broken
+down; a small instance often falls in an hour and shows the way.
+**Trigger:** the impulse to write "multi-session" or "deep core" is the cue to list and
+attempt.
+**Anti-scope:** if you cannot yet list the bricks because the territory is unscouted, say
+which scout you would run first; that is a valid answer, a fake brick list is not.
+{{#if modules.attempts}}
+Choosing among routes for the hard brick is the `attack` skill; its budgets change the
+attempt, not the mandate: a line that runs out of budget is extended, switched, stepped
+down or set aside, and the target stays the goal.
+{{/if}}
+
+## 3. Reduce before reporting blocked{{#if modules.attempts}} (principle: reduce-before-blocked){{/if}}
+
+**Rule.** When the remaining work really is a hard open step, do not stop at "blocked on
+the core". First write the reduction: state the hard step as an explicit hypothesis (a
+named premise), prove or build everything around it, and record what the whole problem
+now depends on. **Why:** it pins the true difficulty to one statement, frequently shows it
+is smaller than it looked, and banks finished work. **Anti-scope:** skip it only when no
+clean statement captures the hard step, and decide that only after one actual attempt at
+writing the reduction (a statement and a few-line skeleton), never in advance.
+
+## 4. Remaining work is a numbered brick list
+
+**Rule.** Whenever a report, handoff or design doc says work "remains", write it as a
+numbered list of bricks, each a stateable next step. **Why:** "a large multi-session task"
+gives the reader nothing to act on; a list does. **Anti-scope:** unscouted territory gets
+"scout X first", as in section 2.
+
+## 5. Fan out at boundaries; ask only at a genuine fork
+
+**Rule.** At the end of a task, if the next threads are independent, cheap and within
+what you were asked to do, start them (in parallel where you can) and report, rather than
+presenting a pick-one menu. Keep a remaining real choice as a one-line note ("say so if
+you would rather pivot"). Writing a handoff or a brief for a sub-task is itself a cheap
+thread: produce it, do not offer to.
+**Why:** a menu of complementary options makes the owner do the scheduling.
+**Anti-scope:** a genuine fork (mutually exclusive designs, an irreversible or
+outward-facing call, a scope only the owner can decide) still gets asked. Cheap threads
+**inside the task you were given** are done and reported even without a continue signal; a
+**new research direction** needs a yes unless there is one.
+
+## 6. Under an explicit autonomous mandate
+
+When the owner gives an explicit long-running instruction ("keep going until you are
+blocked or done", "I will be away; don't stop early"), it is a standing mandate, one kind
+of continue signal, and it stays in force until withdrawn:
+
+- Report progress inline and continue through milestones. Never end a turn with an offer
+  like "is this a reasonable checkpoint?". End a turn only at a genuine external block (an
+  input you lack), a genuine fork, or a deep core after sections 2 and 3.
+- **"This needs deliberate design" is not a stop: the design is the work.** Open a design
+  progress doc (see Terms above) and proceed: scout,
+  attempt a reduction, carry the hard step as a hypothesis.
+- Keep the doc's RESUME HERE and progress log current as part of every brick's commit.
+  The doc is the checkpoint; one that drifts behind the commits makes a restart expensive.
+- Keep any item waiting on the owner (a change awaiting approval, a decision only they can
+  make) at the top of every report, not buried under later news.
+- A usage or rate limit with a reset time is a pause, not the end of the run. Keep RESUME
+  HERE current so the run can be picked up.
+{{#if harness.cap.schedule_wakeup}}
+  If you can still act (a dispatched agent reported the limit), schedule a one-time task in
+  this session for just after the reset; it fires only if the session is still open and idle
+  then. Otherwise the next session resumes from RESUME HERE.
+{{else}}
+  Nothing restarts the session after the reset: say in your report when it resets; the next
+  session resumes from RESUME HERE.
+{{/if}}
+- When you write a handoff for such a stretch, state the continuation mode in its first
+  lines so the next agent starts in it.
+- The mandate does not skip the intake check: a long computation or a new line of work
+  that leaves something open, which `notes/procedures.md` does not answer, is still asked
+  about, once, in one question, before it starts.
+
+## 7. Context resets: flush before you fill
+
+Your context window is scratch; the files are the state. Write decisions, results and the
+next step to disk as you go (the design doc, the records, commits), so a reset loses
+nothing. After a reset, rebuild the state from those files and `git log`, not from the
+summary. You cannot reset or summarize your own context on request: if the owner asks for
+that, write the resume notes to a fresh file, give them the path and the
+{{#if harness.is_claude}}`/compact` command{{else}}harness's context-compaction command{{/if}}, and stop.
+
+## 8. The continue nudge
+
+The hook `hooks/continue-nudge.py` runs when a turn ends. If the owner's last message was a
+bare continue signal (it does not see a standing mandate from earlier), it asks once for the
+turn to keep going. If you really are at a
+genuine block, fork or worked-through deep core, say which and stop again; it does not
+fire twice for the same message. The owner can switch it off with
+`CONTINUE_NUDGE_OFF=1` in the environment.
+
+## When stopping is right
+
+Stopping is correct at: a genuine external block; a genuine fork; a hard core once its
+cheap bricks are exhausted and its reduction is written down; or the absence of any
+continue signal once the task you were given is done. Progress reporting stays inline; only the work halts.
+{{#if modules.tiers}}
+
+See also [tiers.md](tiers.md) for how a worker hands back at its own triggers.
+{{/if}}

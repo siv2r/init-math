@@ -1,0 +1,32 @@
+#!/bin/bash
+# Stand-in for Windows' wsl.exe, used by bin/test-setup-windows inside a Linux container.
+#   FAKE_WSL_LIST   which distributions exist (ubuntu | wsl1 | old | none); printed in UTF-16
+#                   like older WSL does
+#   FAKE_WSL_OLD=1  the WSL built into Windows 10, which does not know --version
+#   FAKE_WSL_PROBE  what a distribution reports about itself (release, Python, user id)
+#   FAKE_WSL_BOM=1  put a byte-order mark in front of piped text, as Windows PowerShell 5.1 does
+echo "wsl.exe $*" >> /tmp/wsl.log
+case "$1" in
+  --version)
+    [ "${FAKE_WSL_OLD:-}" = 1 ] && { echo "Invalid command line option: --version"; exit 1; }
+    echo "WSL version: 2.3.26.0"; exit 0 ;;
+  --list)
+    case "${FAKE_WSL_LIST:-ubuntu}" in
+      none) echo "Windows Subsystem for Linux has no installed distributions." | iconv -t UTF-16LE; exit 1 ;;
+      wsl1) printf '  NAME      STATE           VERSION\r\n* Ubuntu    Stopped         1\r\n' | iconv -t UTF-16LE ;;
+      old) printf '  NAME      STATE           VERSION\r\n* Ubuntu    Stopped         2\r\n' | iconv -t UTF-16LE ;;
+      *) printf '  NAME              STATE           VERSION\r\n* docker-desktop    Running         2\r\n  Ubuntu-24.04      Stopped         2\r\n' | iconv -t UTF-16LE ;;
+    esac ;;
+  --set-version) exit 0 ;;
+  -d)
+    case "$*" in *init-math-probe*)
+      echo "${FAKE_WSL_PROBE:-ID=ubuntu VER=24.04 PY=3.12 UID=${FAKE_WSL_UID:-1000}}"; exit 0 ;;
+    esac
+    while [ $# -gt 0 ] && [ "$1" != --exec ]; do shift; done
+    shift
+    cd "$HOME" || exit 1
+    case "$*" in *"> init-math-setup.sh"*)
+      if [ "${FAKE_WSL_BOM:-}" = 1 ]; then { printf '\357\273\277'; cat; } | "$@"; exit $?; fi ;;
+    esac
+    exec "$@" ;;
+esac

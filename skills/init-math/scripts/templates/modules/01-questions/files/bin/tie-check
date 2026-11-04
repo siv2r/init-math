@@ -1,0 +1,565 @@
+#!/usr/bin/env python3
+"""Lint the `## Question tie` block of a task: does it say, in a checkable shape, how the
+task's outcomes move a named research question?
+
+selftest: yes
+
+A task (an experiment README, a worker brief, a dispatch, a work item in a plan) carries:
+
+    ## Question tie
+    question: Q001 / A2            the numbered answer shape in the question file it moves
+    via: C003                      the conjecture whose claim or residue it acts on
+    kind: decides                  decides | narrows | mechanism | instruments | transfer | explore
+    outcomes:
+    - if <outcome> → <what changes in the answer>
+    - if <failure outcome> → <what changes>
+    bridge: if <result on A> then <step of B> because <mechanism>     (transfer only)
+    consumer: C003 @residue | experiments/<slug>                       (instruments only)
+
+An exploratory task (kind explore) has no outcome map: it names the question (an answer
+shape is optional, `via` too), a `cap:` on its compute, and `looking-for:`. Its follow-ups
+are ordinary tasks.
+
+Fields may also be written `- **question:** ...`. This tool checks only the SHAPE; whether
+the outcomes really follow is the tie-auditor agent's job (docs/discipline/question-ties.md).
+
+FAIL (exit 1):
+  T1 no `Question tie` heading
+  T2 the question does not resolve, names no answer shape A<n>, names one the question file
+     does not have, or is not `active` (unless project.toml [questions]
+     tie_requires_active = false). An open satellite of an active question (`satellite_of:`)
+     counts as active while [questions] satellites = true, the default
+  T3 `via` missing or not a conjecture file (only checked when the conjecture ledger exists)
+  T4 kind not in the six above
+  T5 fewer than two `if ... → ...` outcomes, an outcome with no consequence or a null one
+     ("none", "unchanged"), or two outcomes with the same consequence (kind instruments may
+     instead write `outcomes: inherits <consumer>`)
+  T6 a consequence or bridge whose only content is a vague relation ("related to",
+     "informs", "sheds light", "helps with", ...) with no concrete verb (settles, refutes,
+     bounds, eliminates, ...)
+  T7 kind transfer, or a `via` conjecture not linked to the question (that is a transfer
+     too), without a bridge of the shape `if ... then ... because|since ...`
+  T8 kind instruments without a consumer that resolves (a conjecture carrying `@residue`,
+     or an experiments/<slug>/README.md that itself passes)
+  T9 kind explore without `looking-for:`, or without a `cap:` written as a time ("10 minutes")
+     at most project.toml [questions] explore_cap_minutes (default 10)
+WARN (exit 0):
+  W1 no failure or negative outcome    W2 vague phrase next to a concrete verb
+  W3 `via` not checked: no conjecture ledger in this project
+
+Usage:
+  bin/tie-check FILE...        lint every tie block in each file
+  bin/tie-check -              lint a brief piped on stdin
+  bin/tie-check --json FILE    machine-readable output
+  bin/tie-check --root DIR     resolve questions/conjectures in the project at DIR
+  bin/tie-check --selftest     run the built-in fixtures, plus the examples marked as
+                               fixtures in docs/discipline/question-ties.md
+"""
+from __future__ import annotations
+
+import json
+import re
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+KINDS = ("decides", "narrows", "mechanism", "instruments", "transfer", "explore")
+CAP = re.compile(r"(\d+(?:\.\d+)?)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)\b", re.I)
+NULL_CONSEQ = re.compile(r"^\s*(none|nothing|unchanged|n/?a|no change|-|—|\?)\s*\.?\s*$", re.I)
+VAGUE = re.compile(
+    r"\b(is |are |be |being )?(related|relevant|connected|linked|pertinent) to\b|\brelates to\b|"
+    r"\binforms?\b|\bsheds? light\b|\bhelps? (with|us|understand)\b|\bbears? on\b|"
+    r"\binsights? (into|on|about)\b|\bof interest\b|\buseful (for|to)\b|\bin the (same )?spirit\b|"
+    r"\bmay (be )?(help|inform|illuminate)", re.I)
+CONCRETE = re.compile(
+    r"\b(settle[sd]?|refute[sd]?|prove[sdn]?|eliminat\w*|rules? out|ruled out|bound(s|ed)?|"
+    r"force[sd]?|determin\w*|pin(s|ned)?|witness\w*|realiz\w*|classif\w*|falsif\w*|confirm\w*|"
+    r"decid\w*|exclud\w*|narrow\w*|reduc\w*|impl(y|ies|ied)|contradict\w*|deliver\w*|produc\w*|"
+    r"compute[sd]?|counterexample|A\d+)\b", re.I)
+NEGATIVE = re.compile(
+    r"\b(fail\w*|no|not|never|none|counterexample|refut\w*|break\w*|does not|doesn't|cannot|"
+    r"can't|false|violat\w*|mismatch\w*|disagree\w*|absent|timeout|inconclusive)\b|≠|!=", re.I)
+BRIDGE = re.compile(r"\bif\b.*\bthen\b.*\b(because|since)\b", re.I | re.S)
+ARROW = re.compile(r"^\s*[-*]?\s*(?:\*\*)?if\b(.*?)(?:→|->|⟹|=>)(.*)$", re.I)
+IF_LINE = re.compile(r"^\s*[-*]\s*(?:\*\*)?if\b", re.I)
+FIELD = re.compile(r"^\s*(?:[-*]\s*)?\*{0,2}([a-z][a-z -]*?)\*{0,2}\s*:\s*\*{0,2}\s*(.*)$", re.I)
+HEAD = re.compile(r"^#{1,6}\s*Question tie\b.*$", re.I | re.M)
+QREF = re.compile(r"\b(Q\d{3})\b\s*(?:/|,|·|-)?\s*(A\d+)?")
+Q_ITEM = re.compile(r"^\s*(?:-\s*)?(?:\*\*)?(A\d+)\.", re.M)
+
+
+class Project:
+    """Where the questions, conjectures and experiments of one project live."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        try:
+            with open(root / "project.toml", "rb") as f:
+                cfg = tomllib.load(f)
+        except (OSError, tomllib.TOMLDecodeError):
+            cfg = {}
+        qcfg = cfg.get("questions", {})
+        self.qdir = root / qcfg.get("dir", "wiki/questions")
+        self.cdir = root / cfg.get("conjectures", {}).get("dir", "wiki/conjectures")
+        self.edir = root / "experiments"  # fixed path, as in bin/exp-run
+        self.require_active = bool(qcfg.get("tie_requires_active", True))
+        self.satellites = qcfg.get("satellites", True) is not False
+        self.explore_cap = float(qcfg.get("explore_cap_minutes", 10))
+
+    @staticmethod
+    def _status(text: str) -> str:
+        m = re.search(r"^status:\s*([A-Za-z-]+)", text, re.M)
+        return m.group(1) if m else "?"
+
+    def question(self, qid: str) -> dict | None:
+        hits = sorted(self.qdir.glob(qid + "-*.md")) if self.qdir.is_dir() else []
+        if not hits:
+            return None
+        s = hits[0].read_text(encoding="utf-8")
+        m = re.search(r"^satellite_of:\s*(Q\d{3})\b", s, re.M)
+        return {"status": self._status(s), "items": set(Q_ITEM.findall(s)),
+                "satellite_of": m.group(1) if m else ""}
+
+    def eligible(self, q: dict) -> bool:
+        """Active, or an open satellite of an active question while satellites are on."""
+        if q["status"] == "active":
+            return True
+        parent = self.question(q["satellite_of"]) if q["satellite_of"] else None
+        return bool(self.satellites and parent and parent["status"] == "active"
+                    and q["status"] in ("proposed", "active"))
+
+    def conjecture(self, cid: str) -> dict | None:
+        hits = sorted(self.cdir.glob(cid + "-*.md")) if self.cdir.is_dir() else []
+        if not hits:
+            return None
+        s = hits[0].read_text(encoding="utf-8")
+        m = re.search(r"^questions:\s*\[([^\]]*)\]", s, re.M)
+        qs = [q.strip() for q in m.group(1).split(",") if q.strip()] if m else []
+        return {"questions": qs, "has_residue": "@residue" in s}
+
+
+def extract_blocks(text: str) -> list[tuple[str, str]]:
+    out = []
+    for h in HEAD.finditer(text):
+        rest = text[h.end():]
+        nxt = re.search(r"^#{1,6}\s", rest, re.M)
+        out.append((h.group(0).strip(), rest[: nxt.start()] if nxt else rest))
+    return out
+
+
+def parse_block(block: str) -> tuple[dict, list, list]:
+    fields: dict[str, str] = {}
+    outcomes: list[tuple[str, str]] = []
+    malformed: list[str] = []
+    in_map = False
+    for line in block.splitlines():
+        if not line.strip() or line.strip().startswith("```"):
+            continue
+        m = ARROW.match(line)
+        if m and in_map:
+            outcomes.append((m.group(1).strip(), m.group(2).strip()))
+            continue
+        if in_map and IF_LINE.match(line):
+            malformed.append(line.strip())
+            continue
+        f = FIELD.match(line)
+        if f:
+            key = f.group(1).strip().lower().replace("-", " ")
+            val = f.group(2).strip()
+            if key.startswith("outcome"):
+                in_map = True
+                if val.lower().startswith("inherit"):
+                    fields["outcomes"] = val
+                elif val:  # one-line map: "if a → x; if b → y"
+                    for part in re.split(r";\s*", val):
+                        mm = ARROW.match(part)
+                        if mm:
+                            outcomes.append((mm.group(1).strip(), mm.group(2).strip()))
+                continue
+            in_map = False
+            fields[key] = val
+    return fields, outcomes, malformed
+
+
+def check_block(proj: Project, fields: dict, outcomes: list, malformed: list,
+                depth: int = 0) -> tuple[list[str], list[str]]:
+    fails: list[str] = []
+    warns: list[str] = []
+    kind = re.sub(r"[`*]", "", fields.get("kind", "")).strip().lower()
+    kind = kind.split()[0] if kind else ""
+    explore = kind == "explore"
+    qm = QREF.search(fields.get("question", ""))
+    q = None
+    if not qm:
+        fails.append("T2 no question id (expected `question: Qxxx / A<n>`)")
+    else:
+        qid, item = qm.group(1), qm.group(2)
+        q = proj.question(qid)
+        if q is None:
+            fails.append(f"T2 {qid} has no file in the questions folder")
+        else:
+            if proj.require_active and not proj.eligible(q):
+                sat = f" (a satellite of {q['satellite_of']}, which is not active, or satellites are off)" \
+                    if q["satellite_of"] else ""
+                fails.append(f"T2 {qid} is `{q['status']}`, not `active`{sat}: only questions the owner "
+                             "activated, and their open satellites, generate work")
+            if not item and not explore:
+                fails.append(f"T2 no answer shape named (expected `{qid} / A<n>`)")
+            elif item and item not in q["items"]:
+                have = ", ".join(sorted(q["items"])) or "none"
+                fails.append(f"T2 {qid} has no answer shape {item} (it has: {have})")
+
+    c = None
+    vm = re.search(r"\b(C\d{3})\b", fields.get("via", ""))
+    if not proj.cdir.is_dir():
+        if fields.get("via"):
+            warns.append("W3 `via` not checked: this project has no conjecture ledger")
+    elif not vm and explore and not fields.get("via"):
+        pass  # an exploration need not act on a conjecture
+    elif not vm:
+        fails.append("T3 no `via: Cxxx`: a task acts on a conjecture's claim or residue")
+    else:
+        c = proj.conjecture(vm.group(1))
+        if c is None:
+            fails.append(f"T3 {vm.group(1)} has no file in the conjectures folder")
+
+    if kind not in KINDS:
+        fails.append(f"T4 kind `{kind or '?'}` is not one of: " + ", ".join(KINDS))
+
+    if explore:
+        if not fields.get("looking for"):
+            fails.append("T9 kind explore needs `looking-for:` (the pattern or object it looks for)")
+        cm = CAP.search(fields.get("cap", ""))
+        if not cm:
+            fails.append("T9 kind explore needs `cap:` written as a time, e.g. `cap: 10 minutes`")
+        else:
+            n, unit = float(cm.group(1)), cm.group(2).lower()
+            minutes = n / 60 if unit.startswith("s") else n * 60 if unit.startswith("h") else n
+            if minutes > proj.explore_cap:
+                fails.append(f"T9 cap {cm.group(0)} is above the explore cap of {proj.explore_cap:g} "
+                             "minutes (explore_cap_minutes in project.toml): a larger task needs an outcome map")
+        return fails, warns
+
+    implicit_transfer = bool(q and c and qm and qm.group(1) not in c["questions"])
+    inherits = fields.get("outcomes", "").lower().startswith("inherit")
+    if not (kind == "instruments" and inherits):
+        for line in malformed:
+            fails.append(f"T5 outcome with no `→ consequence`: `{line[:70]}`")
+        if len(outcomes) < 2:
+            fails.append(f"T5 {len(outcomes)} `if ... → ...` outcome(s); need at least two distinct ones"
+                         + (" (or `outcomes: inherits <consumer>`)" if kind == "instruments" else ""))
+        for cond, cons in outcomes:
+            if not cons.strip() or NULL_CONSEQ.match(cons):
+                fails.append(f"T5 null consequence in `if {cond[:40]} → {cons or '(empty)'}`: an "
+                             "outcome that changes nothing is not a tie")
+        norm = [re.sub(r"\s+", " ", o[1]).strip().rstrip(".").lower() for o in outcomes]
+        if len(norm) >= 2 and len(set(norm)) < len(norm):
+            fails.append("T5 two outcomes have the same consequence: the task cannot tell them apart")
+        if outcomes and not any(NEGATIVE.search(a + " " + b) for a, b in outcomes):
+            warns.append("W1 no failure or negative outcome: say what it means if the result goes against you")
+
+    for t in [o[1] for o in outcomes] + [fields.get("bridge", "")]:
+        if t and VAGUE.search(t):
+            if CONCRETE.search(t):
+                warns.append(f"W2 vague phrase next to a concrete verb: `{t[:70]}`")
+            else:
+                fails.append(f"T6 vague-only relation (`{VAGUE.search(t).group(0)}`) in `{t[:70]}`: "
+                             "say what is settled, eliminated, bounded or produced")
+
+    if kind == "transfer" or implicit_transfer:
+        why = "kind is transfer" if kind == "transfer" else (
+            f"{vm.group(1)} is not linked to {qm.group(1)}, so this is a transfer")
+        bridge = fields.get("bridge", "")
+        if not bridge:
+            fails.append(f"T7 {why} but there is no `bridge: if ... then ... because <mechanism>`")
+        elif not BRIDGE.search(bridge):
+            fails.append(f"T7 the bridge needs the shape `if ... then ... because|since ...`: `{bridge[:70]}`")
+
+    if kind == "instruments":
+        cons = fields.get("consumer", "")
+        cm = re.search(r"\b(C\d{3})\b", cons)
+        em = re.search(r"experiments/([A-Za-z0-9_.-]+)", cons)
+        if not cons:
+            fails.append("T8 kind instruments needs `consumer:` (the tied task that will use the tool)")
+        elif cm:
+            if not proj.cdir.is_dir():
+                warns.append("W3 consumer not checked: this project has no conjecture ledger")
+            else:
+                cc = proj.conjecture(cm.group(1))
+                if cc is None:
+                    fails.append(f"T8 consumer {cm.group(1)} has no file in the conjectures folder")
+                elif not cc["has_residue"]:
+                    fails.append(f"T8 consumer {cm.group(1)} carries no `@residue`: name the next step the tool serves")
+        elif em:
+            readme = proj.edir / em.group(1) / "README.md"
+            if not readme.exists():
+                fails.append(f"T8 consumer {readme.relative_to(proj.root)} does not exist")
+            elif depth < 2:
+                sub = check_text(proj, readme.read_text(encoding="utf-8"), str(readme), depth + 1)
+                if sub["fails"]:
+                    fails.append(f"T8 consumer experiments/{em.group(1)} does not itself pass tie-check")
+        else:
+            fails.append(f"T8 consumer `{cons[:60]}` is neither a Cxxx nor an experiments/<slug>")
+    return fails, warns
+
+
+def check_text(proj: Project, text: str, name: str, depth: int = 0) -> dict:
+    res = {"file": name, "blocks": 0, "fails": [], "warns": []}
+    blocks = extract_blocks(text)
+    if not blocks:
+        res["fails"].append("T1 no `## Question tie` block: every task states how its outcomes move a question")
+        return res
+    for head, block in blocks:
+        res["blocks"] += 1
+        f, w = check_block(proj, *parse_block(block), depth=depth)
+        tag = head.lstrip("# ").strip()
+        res["fails"] += [f"[{tag}] {x}" for x in f]
+        res["warns"] += [f"[{tag}] {x}" for x in w]
+    return res
+
+
+# --- selftest ----------------------------------------------------------------
+# A small fixture world in three fields. The examples in docs/discipline/question-ties.md
+# use the same ids, so they are linted against this world too.
+
+WORLD_Q = {
+    "Q001-congruence-primes": ("active", "For which primes l do the coefficients of a level-one "
+                               "eigenform satisfy a(l n + b) = 0 mod l for all n?", 2),
+    "Q002-cap-set-growth": ("active", "What is the exponential growth rate of the largest cap set "
+                            "in F_3^n?", 2),
+    "Q003-unit-circle-incidences": ("active", "What is the maximum number of incidences between "
+                                     "n points and n unit circles in the plane?", 1),
+    "Q004-unit-distances": ("active", "What is the exponent of the maximum number of unit "
+                            "distances among n points in the plane?", 2),
+    "Q005-proposed-only": ("proposed", "Is every finite simple graph of large girth 3-choosable?", 1),
+    "Q006-cap-set-small-n": ("proposed", "What is the largest cap set in F_3^7?", 1),
+}
+SATELLITES = {"Q006": "Q002"}
+WORLD_C = {
+    "C001-weight-bound": (["Q001"], True),
+    "C002-product-caps": (["Q002"], True),
+    "C003-incidence-gain": (["Q003"], False),
+    "C004-grid-optimal": (["Q004"], True),
+    "C005-caps-seven": (["Q006"], True),
+}
+
+
+def build_world(root: Path) -> None:
+    (root / "project.toml").write_text('[project]\nowner = "Ada"\n')
+    q = root / "wiki" / "questions"
+    c = root / "wiki" / "conjectures"
+    q.mkdir(parents=True)
+    c.mkdir(parents=True)
+    for name, (status, sentence, n) in WORLD_Q.items():
+        qid = name[:4]
+        shapes = "\n".join(f"A{i}. shape {i}" for i in range(1, n + 1))
+        by = "Ada" if status == "active" else ""
+        sat = f"satellite_of: {SATELLITES[qid]}\n" if qid in SATELLITES else ""
+        (q / f"{name}.md").write_text(f"---\nid: {qid}\nstatus: {status}\nactivated-by: {by}\n{sat}---\n"
+                                      f"# {qid}: {sentence}\n\n## Answer shapes\n{shapes}\n")
+    for name, (qs, residue) in WORLD_C.items():
+        cid = name[:4]
+        tail = "@residue: the cheapest next step\n" if residue else ""
+        (c / f"{name}.md").write_text(f"---\nid: {cid}\nstatus: open\nquestions: [{', '.join(qs)}]\n"
+                                      f"question-tie: a stated consequence.\nfamily: f\n---\n"
+                                      f"# {cid}: a statement\n## Evidence\n## Next steps\n{tail}")
+
+
+BUILTIN = [
+    ("GOOD", "", """## Question tie
+question: Q002 / A2
+via: C002
+kind: decides
+outcomes:
+- if exhaustive search at n = 7 finds a cap larger than the product construction → C002 is refuted and the larger cap is a witness that A2's bound must come from elsewhere
+- if no larger cap exists at n = 7 → C002 is confirmed through n = 7 and A2's candidate bound is pinned on that range
+"""),
+    ("GOOD", "", """## Question tie
+- **question:** Q004 / A1
+- **via:** C004
+- **kind:** instruments
+- **consumer:** C004 @residue
+- **outcomes:** inherits C004 @residue
+"""),
+    ("GOOD", "", """## Question tie
+question: Q006 / A1
+via: C005
+kind: decides
+outcomes:
+- if exhaustive search at n = 7 finds a cap of size 237 → C005 is confirmed and A1 is settled at 236 or more
+- if the search ends with no cap of size 237 → C005 is refuted and A1 is bounded above by 236
+"""),
+    # A block resubmitted after a WEAK/tie carries `rewritten-after:`; the lint accepts it.
+    ("GOOD", "", """## Question tie
+question: Q002 / A2
+via: C002
+kind: decides
+rewritten-after: WEAK/tie
+outcomes:
+- if exhaustive search at n = 7 finds a cap larger than the product construction → C002 is refuted and the larger cap is a witness that A2's bound must come from elsewhere
+- if no larger cap exists at n = 7 → C002 is confirmed through n = 7 and A2's candidate bound is pinned on that range
+"""),
+    ("GOOD", "", """## Question tie
+question: Q002
+kind: explore
+cap: 10 minutes
+looking-for: whether the maximum caps for n <= 6 share a common affine structure
+"""),
+    ("BAD", "T9", """## Question tie
+question: Q002
+kind: explore
+cap: 2 hours
+looking-for: any structure in the maximum caps for n <= 7
+"""),
+    ("BAD", "T9", """## Question tie
+question: Q002 / A1
+kind: explore
+looking-for: any structure in the maximum caps for n <= 7
+"""),
+    ("BAD", "T2", """## Question tie
+question: Q005
+kind: explore
+cap: 5 minutes
+looking-for: small graphs of girth 5 that are not 3-choosable
+"""),
+    ("BAD", "T1", "# A plan\n\n## Goal\nMeasure something.\n"),
+    ("BAD", "T2", """## Question tie
+question: Q005 / A1
+via: C001
+kind: decides
+outcomes:
+- if a counterexample is found → refutes the claim
+- if none is found → confirms it up to the bound
+"""),
+    ("BAD", "T3", """## Question tie
+question: Q001 / A1
+via: C099
+kind: decides
+outcomes:
+- if a counterexample is found → refutes C099 and gives a witness for A1
+- if none is found → confirms the list in A1 up to weight 40
+"""),
+    ("BAD", "T4", """## Question tie
+question: Q001 / A1
+via: C001
+kind: explores
+outcomes:
+- if a counterexample is found → refutes C001 and gives a witness for A1
+- if none is found → confirms the list in A1 up to weight 40
+"""),
+    ("BAD", "T5", """## Question tie
+question: Q001 / A2
+via: C001
+kind: decides
+outcomes:
+- if the computation finishes → unchanged
+- if it times out → unchanged
+"""),
+    ("BAD", "T5", """## Question tie
+question: Q001 / A2
+via: C001
+kind: decides
+outcomes:
+- if the bound holds for weight 40
+- if it fails → C001 is refuted
+"""),
+    ("BAD", "T8", """## Question tie
+question: Q003 / A1
+via: C003
+kind: instruments
+outcomes: inherits C003 @residue
+consumer: C003 @residue
+"""),
+]
+
+
+def selftest(root_of_doc: Path) -> int:
+    fixtures = [(v, r, b, "built-in") for v, r, b in BUILTIN]
+    doc = root_of_doc / "docs" / "discipline" / "question-ties.md"
+    if doc.exists():
+        found = re.findall(r"<!--\s*fixture:\s*(GOOD|BAD)\s*([A-Z0-9 ,]*)-->\s*```[a-z]*\n(.*?)```",
+                           doc.read_text(encoding="utf-8"), re.S)
+        fixtures += [(v, r, b, "docs/discipline/question-ties.md") for v, r, b in found]
+    bad = 0
+    with tempfile.TemporaryDirectory() as t:
+        world = Path(t)
+        build_world(world)
+        proj = Project(world)
+        for verdict, rules, body, origin in fixtures:
+            res = check_text(proj, body, "fixture")
+            codes = {f.split("] ")[-1].split()[0] for f in res["fails"]}
+            want = [x for x in re.split(r"[ ,]+", rules.strip()) if x]
+            ok = (not res["fails"]) if verdict == "GOOD" else (
+                bool(res["fails"]) and all(w in codes for w in want))
+            if not ok:
+                bad += 1
+                print(f"SELFTEST FAIL ({origin}): {verdict} {' '.join(want)} fixture gave "
+                      f"{sorted(codes) or 'PASS'}: {res['fails']}")
+        # With satellites off, a satellite is a proposed question like any other.
+        (world / "project.toml").write_text('[project]\nowner = "Ada"\n[questions]\nsatellites = false\n')
+        sat_tie = next(b for v, r, b in BUILTIN if "Q006" in b)
+        res = check_text(Project(world), sat_tie, "satellites-off")
+        if not any(f.split("] ")[-1].startswith("T2") and "satellite of Q002" in f for f in res["fails"]):
+            bad += 1
+            print(f"SELFTEST FAIL: satellites off must fail T2 for Q006: {res['fails']}")
+        (world / "project.toml").write_text('[project]\nowner = "Ada"\n')
+        # Without a conjecture ledger, `via` is not checked (the ledger module may be off).
+        for p in (world / "wiki" / "conjectures").iterdir():
+            p.unlink()
+        (world / "wiki" / "conjectures").rmdir()
+        res = check_text(Project(world), BUILTIN[0][2], "no-ledger")
+        if res["fails"] or not any("W3" in w for w in res["warns"]):
+            bad += 1
+            print(f"SELFTEST FAIL: no-ledger case gave {res}")
+    print(f"tie-check selftest: {len(fixtures) + 2} cases, {bad} failed")
+    return 1 if bad else 0
+
+
+def main(argv: list[str]) -> int:
+    root = Path(__file__).resolve().parent.parent
+    if "--root" in argv:
+        i = argv.index("--root")
+        if i + 1 >= len(argv):
+            print("--root needs a directory", file=sys.stderr)
+            return 2
+        root = Path(argv[i + 1]).resolve()
+        argv = argv[:i] + argv[i + 2:]
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return 0
+    if "--selftest" in argv:
+        return selftest(root)
+    files = [a for a in argv if a == "-" or not a.startswith("--")]
+    if not files:
+        print(__doc__)
+        return 2
+    proj = Project(root)
+    results, worst = [], 0
+    for f in files:
+        if f == "-":
+            results.append(check_text(proj, sys.stdin.read(), "<stdin>"))
+        else:
+            p = Path(f)
+            if not p.exists():
+                print(f"tie-check: no such file {f}", file=sys.stderr)
+                worst = 2
+                continue
+            results.append(check_text(proj, p.read_text(encoding="utf-8"), f))
+    if "--json" in argv:
+        print(json.dumps(results, indent=1, ensure_ascii=False))
+    else:
+        for r in results:
+            status = "FAIL" if r["fails"] else ("WARN" if r["warns"] else "ok")
+            print(f"{status}\t{r['file']}\t{r['blocks']} tie block(s)")
+            for x in r["fails"]:
+                print("  FAIL", x)
+            for x in r["warns"]:
+                print("  WARN", x)
+    if any(r["fails"] for r in results):
+        worst = max(worst, 1)
+    return worst
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

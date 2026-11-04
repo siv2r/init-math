@@ -1,0 +1,56 @@
+{
+  "project": {
+    "name": "Partition Congruences",
+    "owner": "A. Researcher",
+    "field": "number theory",
+    "subarea": "partition congruences and modular forms",
+    "research_kinds": ["theory", "experiment", "formalization"],
+    "init_date": "2026-10-08"
+  },
+  "harness": "claude",
+  "stack": {
+    "tools": ["PARI/GP", "Python"],
+    "run_cmd": "gp -q {driver}",
+    "research_commands": ["gp", "python3"],
+    "failure_signatures": [
+      {"label": "pari-stack", "regex": "the PARI stack overflows"},
+      {"label": "traceback", "regex": "Traceback \\(most recent call last\\)"}
+    ],
+    "hygiene_rules": ["State the level and weight of every modular form."],
+    "proof_assistant": "lean",
+    "lake_path": ""
+  },
+  "modules": {"disable": [], "enable": [], "preset": ""},
+  "experiments": {"limits": {"smoke": {"mem_mb": 1500}, "deep": {"time_s": 86400, "mem_mb": 32000}}},
+  "exposition": {
+    "prior_work": [
+      "A. Researcher, Congruences for eta-quotients of prime level, 2021, the project reuses its level criterion (Theorem 2)",
+      "A. Researcher, PhD thesis on partition congruences, 2019, Chapter 3 (the lifting lemma)"
+    ],
+    "model_text": "Ahlgren, Ono: Congruence properties for the partition function (PNAS 2001)"
+  },
+  "seeds": {
+    "questions": [
+      {
+        "sentence": "For which primes l and moduli does p(l^k n + b) vanish mod l^k for all n?",
+        "answer_shapes": [
+          "a complete list of (l, b) for k = 1 beyond Ramanujan's 5, 7, 11",
+          "a criterion in terms of the eta-quotient's level",
+          "a complete list of (l, b) for k >= 2"
+        ],
+        "why": "Ramanujan-type congruences are classified for k = 1; the higher-power picture is not."
+      }
+    ],
+    "conjectures": [
+      {
+        "statement": "Every Ramanujan-type congruence mod l^2 for l >= 13 lifts a congruence mod l.",
+        "questions": ["Q001"],
+        "tie": "If true, A3 reduces to the A1 list plus a lifting test for each entry.",
+        "family": "p(n), primes 13 <= l <= 31"
+      }
+    ],
+    "sources": [
+      {"cite": "Ahlgren, Ono: Congruence properties for the partition function (PNAS 2001)", "locator": "doi:10.1073/pnas.221445998", "why": "anchor survey"}
+    ]
+  }
+}

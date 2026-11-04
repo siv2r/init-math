@@ -1,0 +1,14 @@
+## Model tiers and workers
+
+- **strong tier / worker tier**: the two model settings in `project.toml` `[tiers]` (see there for the models in use). The strong tier ({{tiers.strong}}) does direction, design and review; the worker tier ({{tiers.worker}}) does execution.
+{{#if !modules.lean}}
+- **brick**: one self-contained unit of work with a stated finish line: a lemma to prove, a script to write and validate, a table to fill. Remaining work is always written as a numbered list of bricks.
+{{/if}}
+- **DONE / PARTIAL / NEED-DIRECTION**: the three ways a worker ends. DONE: the brick is finished and checked. PARTIAL: some of it landed, the rest is listed. NEED-DIRECTION: the worker hit an escalation trigger and hands back the facts without choosing.
+- **escalation trigger**: a mechanical condition (for example "the same goal failed 3 attempts") at which a worker must stop and return NEED-DIRECTION instead of judging whether it is stuck.
+- **best-of-n**: answering a stuck search by running several attempts with deliberately different approaches and keeping the best one. It is for finding an argument, never for deciding whether one is correct.
+- **step audit**: checking an argument step by step (by a reviewer), as opposed to comparing final answers across attempts.
+- **attempt**: one edit-plus-check cycle on a goal. Escalation counts are in attempts.{{#if modules.attempts}} Not the same as a **line of attack**, which may span many sessions.{{/if}}
+- **CLAIM line**: the extra line a proof or construction brick's return carries (`PROVED`, `COUNTEREXAMPLE`, `GAPS (core: ...; routine: ...)`, `ARGUED (<labels>; premises: ...)`, `NOT-PROVED` or `NONE (escalated: ...)`), saying what the brick established.
+- **long job**: a build, sweep or computation that may run longer than about two minutes; only the coordinator starts one.
+- **ARGUED**: the CLAIM verdict for an argument that convinces but is not a proof: a non-deductive step or an open premise. Its labels say what kind (`heuristic`, `moral`, `conditional`, `model-only (<model>)`, `analogy (hint)`, `analogy (relay: ...)`, combined with `+`). An argued claim is evidence, never a result.

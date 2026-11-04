@@ -1,0 +1,80 @@
+[gates]
+# The commit gate (.githooks/pre-commit). See docs/discipline/commit-gate.md.
+enabled = true
+# "always": refuse every commit that lacks a required review. "once": refuse the first
+# time for a given set of problems and let an identical retry through.
+refuse = "always"
+# A passing stamp whose excerpt matches one of these (regexes, whole words, any case) is
+# refused unless --caveat-ok quotes the line. Left out on purpose: "gap" alone and
+# "conditional on", which in passing reports are usually the mathematical noun and a cited
+# conditional-on: line.
+caveat_phrases = ['sketch(ed)?', 'not (yet )?(verified|certified|checked|proved)', 'unproved', 'incorrect', 'from memory', 'open gap', 'gap remains', 'not rigorous']
+
+[gates.verdicts]
+# Reviewer = the verdicts that count as passing; only these satisfy the commit gate.
+# bin/gate-stamp records the failing ones too ([gates.failing]) as review history.
+claim-auditor = ["SOUND"]
+proof-referee = ["CLEAN", "CLEAN-MINOR"]
+red-team = ["SURVIVED"]
+{{#if modules.readers}}
+cold-reader = ["SELF-CONTAINED", "SELF-CONTAINED-MINOR"]
+expositor = ["READER-READY"]
+provenance = ["ATTRIBUTION-CLEAN"]
+{{/if}}
+
+[gates.failing]
+# Reviewer = its non-passing verdicts. Any other word is refused as a typo.
+claim-auditor = ["OVER-CLAIMED", "UNSUPPORTED", "INCONSISTENT"]
+proof-referee = ["NEEDS-WORK"]
+red-team = ["REFUTED", "NARROWED", "INCONCLUSIVE"]
+{{#if modules.readers}}
+cold-reader = ["NEEDS-CONTEXT"]
+expositor = ["NEEDS-WORK"]
+provenance = ["NEEDS-CITATIONS"]
+{{/if}}
+
+[gates.proof]
+# A changed line inside a proof block (\begin{proof}...\end{proof}, or a line starting
+# "Proof." up to an end-of-proof mark or the next heading) in these files needs these
+# reviews. Optional keys `start` and `end` (lists of regexes) override the block markers;
+# `enabled = false` switches this proof check off.
+paths = ["**/*.md", "**/*.tex"]
+exclude = ["docs/**", "logs/**", {{#if harness.is_claude}}".claude/**", {{/if}}{{#if harness.is_codex}}".codex/**", ".agents/**", {{/if}}".gates/**", "**/TEMPLATE*", "AGENTS.md", {{#if harness.coordinator_file}}"{{harness.coordinator_file}}", {{/if}}"GLOSSARY.md"{{#if modules.attempts}}, "wiki/attempts/**"{{/if}}]
+gates = ["proof-referee", "claim-auditor"]
+{{#if modules.conjectures}}
+
+# A conjecture whose frontmatter `status:` changes to one of these needs these reviews.
+# The status-authority table is in docs/discipline/conjecture-ledger.md.
+[[gates.rules]]
+paths = ["wiki/conjectures/C*.md"]
+status = ["weakly-supported", "refuted"]
+gates = ["claim-auditor"]
+
+[[gates.rules]]
+paths = ["wiki/conjectures/C*.md"]
+status = ["supported", "scope-tight"]
+gates = ["claim-auditor", "red-team"]
+
+# `proved` by our own proof needs all three, and the claim-auditor's last look (a stamp of
+# kind last-look). A proof settled by a cited result carries a
+# `settled-by: <known-results file>` line and needs only the claim-auditor.
+[[gates.rules]]
+paths = ["wiki/conjectures/C*.md"]
+status = ["proved"]
+unless = '^settled-by:\s*\S'
+gates = ["claim-auditor", "proof-referee", "red-team"]
+last_look = ["claim-auditor"]
+
+[[gates.rules]]
+paths = ["wiki/conjectures/C*.md"]
+status = ["proved"]
+when = '^settled-by:\s*\S'
+gates = ["claim-auditor"]
+{{/if}}
+{{#if modules.readers}}
+
+# Example, off by default: require the reader reviewers on any change to a write-up.
+# [[gates.rules]]
+# paths = ["writeups/**"]
+# gates = ["provenance", "expositor", "cold-reader"]
+{{/if}}

@@ -1,0 +1,13 @@
+# Optional per-experiment settings for bin/exp-run; they override project.toml.
+# Leave run_cmd out to inherit [stack].run_cmd from project.toml ({driver} is replaced by the
+# driver's path). Set it here only when this one experiment needs a different command.
+# run_cmd = "..."
+#
+# The template's example driver is driver.py (Python). If you write the driver in your own
+# tool, name it e.g. driver.<ext> and set it here:
+# driver = "driver.<ext>"
+
+# Per-experiment limits for bin/guard-run (seconds, MB); uncomment to override project.toml.
+# [limits.full]
+# time_s = 3600
+# mem_mb = 4000

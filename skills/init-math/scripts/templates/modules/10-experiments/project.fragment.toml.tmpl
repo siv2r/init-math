@@ -1,0 +1,19 @@
+[experiments]
+# Driver file inside experiments/<slug>/; bin/exp-run puts its path where [stack].run_cmd
+# says {driver}. Named for the tool run_cmd starts. An experiment can override both in its
+# own run.toml.
+driver = {{toml.stack.driver}}
+# Shell commands whose first output line records a tool version in every run manifest,
+# e.g. ["python3 --version"]. Each must exit by itself within 10 s.
+# Generic examples; list the tools your drivers use:
+# version_cmds = ["gp --version-short", "python3 --version"]
+version_cmds = []
+
+# Watchdog limits per tier (wall seconds, resident MB of the whole process tree).
+# Start small: a misjudged run should die in seconds. 0 = no limit.
+# init-math defaults: smoke 120 s / 2000 MB, full 7200 s / 8000 MB, deep 43200 s / 16000 MB.
+# Change them here at any time; one experiment can override them in its own run.toml.
+[experiments.limits]
+smoke = { time_s = {{experiments.limits.smoke.time_s}}, mem_mb = {{experiments.limits.smoke.mem_mb}} }
+full = { time_s = {{experiments.limits.full.time_s}}, mem_mb = {{experiments.limits.full.mem_mb}} }
+deep = { time_s = {{experiments.limits.deep.time_s}}, mem_mb = {{experiments.limits.deep.mem_mb}} }

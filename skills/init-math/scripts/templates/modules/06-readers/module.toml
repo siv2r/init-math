@@ -1,0 +1,8 @@
+id = "readers"
+number = 6
+title = "Reader reviewers"
+group = "B"
+status = "included"
+order = 60
+summary = "Three fresh-context reviewers for write-ups other people read: a cold reader (can a stranger follow it?), an expositor (can a mathematician learn from it?) and a provenance check (what is new, what is the owner's prior work, what is classical?)."
+depends = []

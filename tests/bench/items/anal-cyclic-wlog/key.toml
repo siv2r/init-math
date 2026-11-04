@@ -1,0 +1,14 @@
+# The statement is FALSE. D is invariant only under cyclic shifts, not under transpositions,
+# so one may assume c = min(a, b, c) but not also a >= b. The proof never treats c <= a <= b.
+# Counterexample: D(5, 9, 0) = 2(125 + 729) + 5(225) - 7(405) = 1708 + 1125 - 2835 = -2
+# (and its rotations (9, 0, 5), (0, 5, 9)). Exhaustive search over integer triples in
+# [0, 20]^3: every negative triple has max entry >= 9; the smallest are rotations of (5, 9, 0).
+# Equality also holds at rotations of (2, 0, 1), which makes small checks look tight, not false.
+# In the other orientation (b = c + x + y, a = c + y) the expansion is
+# 4c(x^2 + xy + y^2) + 2x^3 - x^2 y - 3x y^2 + 2y^3, negative e.g. at c = 0, x = 4, y = 5.
+# The translation identity and the sorted-case expansion are correct (checked symbolically).
+kind = "flawed"
+error_class = "unwarranted assumption: a WLOG that loses generality"
+location = "the reduction 'D is invariant under relabelling the variables cyclically, and we may assume a >= b >= c >= 0'"
+catch = "says the WLOG a >= b >= c is not justified because D is invariant only under cyclic shifts (not under swapping two variables), so the orientation c <= a <= b is never handled; ideally gives a counterexample such as (a, b, c) = (5, 9, 0), where D = -2"
+audited = "2026-10-28, Claude Fable 5.1: D(5,9,0) = -2 recomputed; translation identity and sorted expansion verified symbolically; exhaustive [0,20]^3 search finds no sorted negative triple; single planted step; no cited results"

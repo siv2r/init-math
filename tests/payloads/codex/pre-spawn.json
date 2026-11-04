@@ -1,0 +1,17 @@
+{
+  "cwd": "/tmp/proj",
+  "hook_event_name": "PreToolUse",
+  "model": "gpt-6-luna",
+  "permission_mode": "bypassPermissions",
+  "session_id": "01a11c59-386e-76e3-8954-062556212682",
+  "tool_input": {
+    "agent_type": "probe-reviewer",
+    "fork_turns": "all",
+    "message": "gAAAAABqx8TuQ9RuotQPtS1DxvGQ7-LbtXlFrGl1TlJ5LXNZ02S_ra3WgtQ-XweF5Sjd9kF-x7GlQ64e6eOqXkqQoelnp8lGsKwmwWgcHYbQzry05lpUlXlzkyhPul4GubgEUrVmQqjOhHg_j2dEOdxPtbgVqT98UQ==",
+    "task_name": "probe"
+  },
+  "tool_name": "collaborationspawn_agent",
+  "tool_use_id": "call_849ed591ac504c53a4d143c1dfea31af",
+  "transcript_path": "/home/user/.codex/sessions/2026/10/08/rollout-2026-10-08T11-29-31-01a11c59-386e-76e3-8954-062556212682.jsonl",
+  "turn_id": "01a11c59-38f4-7962-8a4e-9b2252daaf11"
+}

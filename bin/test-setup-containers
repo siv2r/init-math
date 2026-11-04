@@ -1,0 +1,35 @@
+#!/bin/bash
+# Run setup.sh for real in fresh Linux containers (needs Docker and the network).
+# Unattended (--yes): it installs packages and the agent program, then lists what needs a
+# person (GitHub key, login). Separate from bin/test because it downloads a lot.
+#
+#   bin/test-setup-containers [image ...]     default: ubuntu:24.04 debian:12 ubuntu:22.04
+#
+# Expected: on ubuntu:24.04 and debian:12 the final check shows Python, git and curl OK and
+# the agent program installed but not logged in; on ubuntu:22.04 (Python 3.10) the plan
+# stops at the Python check with advice.
+cd "$(dirname "$0")/.." || exit 1
+images=("$@")
+[ ${#images[@]} -eq 0 ] && images=(ubuntu:24.04 debian:12 ubuntu:22.04)
+status=0
+for img in "${images[@]}"; do
+  for harness in claude codex; do
+    echo "=== $img, $harness"
+    out=$(docker run --rm -v "$PWD/setup.sh:/src/setup.sh:ro" -w /root "$img" \
+      bash -c "cp /src/setup.sh . && bash setup.sh --yes --harness $harness" 2>&1)
+    rc=$?
+    printf '%s\n' "$out" | grep -E '^  (OK|TO DO|NEEDS YOU) |^  - |needs 3.11|Stopped during' | sed 's/^/    /'
+    case "$img" in
+      ubuntu:22.04)
+        if printf '%s' "$out" | grep -q "needs 3.11 or newer"; then echo "  PASS (old Python caught)"
+        else echo "  FAIL"; status=1; fi ;;
+      *)
+        label="Claude Code"; [ "$harness" = codex ] && label="Codex"
+        if printf '%s' "$out" | grep -q "OK         Python 3.1[1-9]" \
+           && printf '%s' "$out" | grep -q "$label is installed but not logged in" \
+           && ! printf '%s' "$out" | grep -q "Stopped during"; then echo "  PASS (rc=$rc)"
+        else echo "  FAIL (rc=$rc)"; printf '%s\n' "$out" | tail -30; status=1; fi ;;
+    esac
+  done
+done
+exit $status

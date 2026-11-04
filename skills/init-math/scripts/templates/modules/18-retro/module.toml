@@ -1,0 +1,8 @@
+id = "retro"
+number = 18
+title = "Session retrospective"
+group = "E"
+status = "included"
+order = 180
+summary = "At the end of a feedback-heavy session, list what the owner had to correct or explain, log it, and propose the standing changes that would have made it unnecessary."
+depends = []

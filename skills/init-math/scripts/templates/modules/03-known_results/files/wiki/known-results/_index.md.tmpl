@@ -1,0 +1,39 @@
+# Known results
+
+What the literature already proves or observes about the objects this project studies.
+Use it three ways: look here before searching the literature again; look here before
+testing or proving something, since it may be settled; and read across entries for
+patterns worth stating as conjectures. Reasoning behind the rules:
+[docs/discipline/known-results.md](../../docs/discipline/known-results.md).
+{{#if project.init_date}}
+
+Created: {{project.init_date}}
+{{/if}}
+
+## How it is organized
+
+- **One file per object of study**, named for the object (`<object>-<catalog id>.md` when
+  the object has a catalog id, e.g. an OEIS A-number or an LMFDB label). Format:
+  [TEMPLATE.md](TEMPLATE.md).
+- **Family files** (`family-<topic>.md`) hold results about a whole class of objects that
+  are not keyed to one of them.
+- Every result records its **statement** (with the source's hypotheses), **scope**,
+  **source** (citation, theorem or section, date accessed), and how you read it:
+  **firsthand**, **corroborated** by two independent restatements, or **checked**
+  yourself. A result known only from a summary is a seed to verify.
+- **A claim without a source you have read is a seed to verify**, filed under "Seeds to
+  verify", never under Results.
+{{#if modules.conjectures}}
+- **Bearing on the ledger:** a result that `settles:` a conjecture means mark that
+  conjecture `proved` with the citation instead of testing it; one that `suggests:` a
+  conjecture is its origin. Link both ways: the conjecture's evidence cites the entry here.
+{{/if}}
+- Entries are added to, not rewritten: when a source turns out wrong or superseded, say so
+  in the entry and keep it.
+
+## Entries
+
+| object | file | ids |
+|---|---|---|
+
+(No entries yet. Copy TEMPLATE.md for the first object you look up.)

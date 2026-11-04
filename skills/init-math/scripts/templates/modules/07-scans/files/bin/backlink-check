@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""backlink-check: find one-way links between known results and the conjectures they bear on.
+
+A known-results file that says "settles:" or "suggests:" a conjecture (by a [[C001-slug]]
+wikilink or a bare id such as C001 on that line, or on list items under a "settles:" key)
+creates a forward link. The conjecture file must link back: it must mention the
+known-result's file stem. Otherwise an agent reading the conjecture never learns that the
+literature already settles or suggests it. See docs/discipline/scans.md.
+
+Exit 1 on any one-way link, else 0. If wiki/known-results/ or wiki/conjectures/ does not
+exist there is nothing to check (exit 0).
+
+selftest: yes
+usage: bin/backlink-check [known-result.md ...] [--porcelain]
+       bin/backlink-check --bearing-map    (print: conjecture -> results that bear on it)
+       bin/backlink-check --selftest
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+KEY = re.compile(r"^\s*(?:[-*]\s*)?\**(settles|suggests)\**\s*:(.*)$", re.I)
+LIST_ITEM = re.compile(r"^\s+[-*]\s+(.*)$")
+CID = re.compile(r"(?<![\w-])(C\d{3})(?:-[\w.-]+)?(?![\w])")
+
+
+def edges(kr: Path) -> list[tuple[str, str]]:
+    """(relation, conjecture id) pairs declared in one known-results file."""
+    out, current = [], None
+    for line in kr.read_text(encoding="utf-8", errors="replace").splitlines():
+        m = KEY.match(line)
+        if m:
+            current = m.group(1).lower()
+            out += [(current, c) for c in CID.findall(m.group(2))]
+            continue
+        lm = LIST_ITEM.match(line)
+        if current and lm:
+            out += [(current, c) for c in CID.findall(lm.group(1))]
+            continue
+        current = None
+    return out
+
+
+def known_results(root: Path) -> list[Path]:
+    d = root / "wiki" / "known-results"
+    if not d.is_dir():
+        return []
+    return sorted(p for p in d.glob("*.md") if not p.name.startswith(("_", ".")) and not p.name.upper().startswith("TEMPLATE"))
+
+
+def conjecture_dir(root: Path) -> Path:
+    """[conjectures] dir from project.toml, else wiki/conjectures."""
+    try:
+        cfg = tomllib.loads((root / "project.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        cfg = {}
+    return root / str(cfg.get("conjectures", {}).get("dir", "wiki/conjectures"))
+
+
+def conjecture_file(root: Path, cid: str) -> Path | None:
+    hits = sorted(conjecture_dir(root).glob(f"{cid}-*.md"))
+    return hits[0] if hits else None
+
+
+def check(root: Path, files: list[Path]) -> list[tuple[str, str, str]]:
+    problems = []
+    for kr in files:
+        for rel, cid in edges(kr):
+            cf = conjecture_file(root, cid)
+            if cf is None:
+                problems.append((kr.name, cid, f"{rel}: no conjecture file for {cid}"))
+                continue
+            text = cf.read_text(encoding="utf-8", errors="replace")
+            if not re.search(rf"(?<![\w-]){re.escape(kr.stem)}(?![\w-])", text):
+                problems.append((kr.name, cid, f"{rel}: {cf.name} never mentions {kr.stem}"))
+    return problems
+
+
+def bearing_map(root: Path) -> dict[str, list[str]]:
+    table: dict[str, list[str]] = {}
+    for kr in known_results(root):
+        for rel, cid in edges(kr):
+            table.setdefault(cid, []).append(f"{kr.stem} ({rel})")
+    return dict(sorted(table.items()))
+
+
+def selftest() -> int:
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        k, c = root / "wiki" / "known-results", root / "wiki" / "conjectures"
+        k.mkdir(parents=True)
+        c.mkdir(parents=True)
+        (c / "C001-bound.md").write_text("Settled by [[smith-bound]].\n")
+        (c / "C002-growth.md").write_text("No backlink.\n")
+        (k / "smith-bound.md").write_text("---\nsettles: [[C001-bound]]\n---\n")
+        (k / "jones-growth.md").write_text("---\nsuggests:\n  - C002\n  - C009\ntitle: x\n---\n")
+        (k / "_index.md").write_text("settles: C002\n")
+        got = sorted((a, b) for a, b, _ in check(root, known_results(root)))
+        if got != [("jones-growth.md", "C002"), ("jones-growth.md", "C009")]:
+            print(f"selftest FAIL: {got}")
+            return 1
+        if list(bearing_map(root)) != ["C001", "C002", "C009"]:
+            print(f"selftest FAIL (map): {bearing_map(root)}")
+            return 1
+        # the ledger is read from [conjectures] dir in project.toml
+        (root / "project.toml").write_text('[conjectures]\ndir = "notes/conj"\n')
+        (root / "notes" / "conj").mkdir(parents=True)
+        (root / "notes" / "conj" / "C001-bound.md").write_text("No backlink here.\n")
+        got = sorted((a, b) for a, b, _ in check(root, known_results(root)))
+        if ("smith-bound.md", "C001") not in got:
+            print(f"selftest FAIL (configured dir): {got}")
+            return 1
+    print("backlink-check selftest: ok")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("files", nargs="*")
+    ap.add_argument("--porcelain", action="store_true", help="one 'file<TAB>id<TAB>problem' per line")
+    ap.add_argument("--bearing-map", action="store_true")
+    ap.add_argument("--selftest", action="store_true")
+    a = ap.parse_args(argv)
+    if a.selftest:
+        return selftest()
+    if a.bearing_map:
+        for cid, krs in bearing_map(ROOT).items():
+            print(f"| {cid} | {', '.join(krs)} |")
+        return 0
+    if not conjecture_dir(ROOT).is_dir():
+        print(f"backlink-check: no {conjecture_dir(ROOT).relative_to(ROOT)}/ — nothing to check.")
+        return 0
+    files = [Path(f) for f in a.files] or known_results(ROOT)
+    problems = check(ROOT, files)
+    for kr, cid, why in problems:
+        print(f"{kr}\t{cid}\t{why}" if a.porcelain else f"one-way link: {kr} -> {cid}: {why}")
+    if not a.porcelain:
+        print(f"backlink-check: {len(files)} known-result file(s), {len(problems)} one-way link(s)."
+              + (" Add a line to the conjecture's evidence naming the known result." if problems else ""))
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

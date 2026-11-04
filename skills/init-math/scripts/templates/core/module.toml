@@ -1,0 +1,32 @@
+id = "core"
+number = 0
+title = "Core: operating guide, project config, glossary"
+group = "-"
+status = "included"
+core = true
+order = 0
+summary = "AGENTS.md, project.toml, GLOSSARY, owner's manual, hook runtime, selftest."
+allow_commands = ["bin/selftest", "bin/doctor", "bin/glossary"]  # pre-approved: checks and records only
+
+[[hooks]]
+script = "hooks/file-home-nudge.py"
+event = "PreToolUse"
+actions = ["edit"]
+
+[[hooks]]
+script = "hooks/coordinator-context.py"
+event = "SessionStart"
+harnesses = ["claude"]
+args = ["--part", "1"]
+
+[[hooks]]
+script = "hooks/coordinator-context.py"
+event = "SessionStart"
+harnesses = ["claude"]
+args = ["--part", "2"]
+
+[[hooks]]
+script = "hooks/coordinator-context.py"
+event = "SessionStart"
+harnesses = ["claude"]
+args = ["--part", "3"]

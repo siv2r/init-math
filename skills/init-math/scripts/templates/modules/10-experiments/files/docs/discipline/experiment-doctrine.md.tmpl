@@ -1,0 +1,168 @@
+# Experiment doctrine
+
+How to design, run and read a computational experiment so that its verdict means what it
+says. The step-by-step procedure is in [../../experiments/WORKFLOW.md](../../experiments/WORKFLOW.md);
+this page is the reasoning behind it. Each rule: the rule, why, and when it does not apply.
+
+## Before the driver
+
+**Prior art first.** Before writing a driver, fill the README's *Prior art* section: the
+theorem, table, paper or earlier experiment that already covers this, or "none found" with
+what you searched.
+- Why: re-deriving a published value costs a run and teaches nothing, and a known value is
+  the best known-answer check you will get.
+- Not for: a five-line probe you will throw away.
+
+**Check the method's resolution before paying for it.** Before an expensive run, ask what
+the method can and cannot distinguish at the sizes you can afford (a finite search cannot
+prove "never"; a sample of 10^4 cannot see a rate of 10^-6).
+- Why: a run whose best possible outcome cannot change your answer is wasted budget.
+
+**Predict before the full run.**{{#if modules.attempts}} (principle: predict-first){{/if}} Fill the README's *Prediction* (the expected outcome, how
+likely, and which outcome would count as support) before `--full`, and its *Surprise* after.
+- Why: once the answer is in, what you expected is rewritten to match it; a recorded
+  prediction keeps the surprise, which is where the run teaches most.
+- Not for: the smoke run.
+
+**Explore, then freeze and confirm.** An experiment may be exploratory (`purpose: explore` in
+its README): smoke-sized runs that look for structure or build conviction, tied to a
+question{{#if modules.conjectures}} rather than a conjecture{{/if}}. Once a pattern emerges, stop exploring: write the
+statement and the range to test down{{#if modules.conjectures}} as a conjecture{{/if}}, then confirm it in a new `test`
+experiment on cases the exploration did not see. Shrink any counterexample to a minimal one
+before recording it.
+- Why: a pattern read off the data it was found in has been fitted to that data; only fresh
+  cases test it. A minimal counterexample shows which hypothesis fails.
+- Not for: a finding. An exploratory run is never cited as evidence for the pattern it found.
+  When the exploration covered every case of a finite statement, confirm that statement by
+  rerunning it as a frozen `test` experiment (prediction, known-answer check, archived run)
+  on the same range; any claim beyond the range is the conjecture to test on new cases.
+
+## Breadth before depth
+
+Run many small cases before a few large ones. Escalate the expensive axis (the size
+parameter: a prime, a dimension, the number of vertices) last, and switch to a faster tool before cranking a
+bound on a slow one.
+- Why: cost usually grows steeply with size, while most structure (and most bugs) already
+  shows up on small cases. A wide cheap sweep tells you where depth is worth buying.
+- Not for: a statement that is only interesting asymptotically, where small cases are
+  known to mislead; say so in the README.
+
+## Fast feedback first
+
+**Smoke on the hard corners.** A smoke run takes seconds and covers the cases most likely
+to break the driver: the smallest and degenerate inputs, the edges of the parameter range,
+one case at the largest size the full run will reach.
+- Why: a sweep that fails after an hour on a case a ten-second smoke could have hit wastes
+  the hour; the easy middle cases rarely expose bugs.
+
+**Cheap exact before expensive illustration.** When an exact criterion (a closed form, a
+finite check that decides the question) exists, compute it first; plots and large
+illustrative runs come after.
+
+## Honest checks
+
+**Every driver re-checks a known answer.** The driver recomputes, through the same code
+path as the sweep, one case whose answer is known *independently*: a published value
+(the number of labelled trees on 5 vertices is 125), a hand computation, a trivial case.
+- Why: a driver that is wrong on a known case is wrong everywhere, and nothing else in a
+  sweep tells you so.
+- A value the same code computed earlier is NOT an independent answer. If the check fails,
+  the verdict is INCONCLUSIVE, not FAIL.
+
+**Three verdicts, not two.** PASS, FAIL, or INCONCLUSIVE (the budget ran out, or the
+instrument failed its own check). A timeout is never a FAIL and never a PASS.
+
+**Attack the checker first.** Before a scorer, verifier or numerical check is relied on for a
+claim or to steer a search, answer three questions in the README's *Checker attacked* line:
+does it test everything the claim says, or a subset (one family, only the perfect squares)?
+Is its arithmetic exact, or is its precision stated and enough? And run it on one degenerate
+or trivial input, recording the command and the output: does that input score well?
+- Why: a search optimizes the checker, not the claim. Searches have exploited a leaky
+  positivity check and a float tolerance, and beaten a true optimum through an interpolating
+  scorer; a program scored only on perfect squares became optimal on squares and wrong
+  elsewhere.
+- Not for: a known-answer check on a published value; that is a check of the driver.
+
+**Reproduce a numerical certificate; do not read it.** Before a certificate (a bound, an
+identity verified to many digits, a computed witness) is cited, recompute it another way:
+another method, exact arithmetic, or an independent implementation. Rerunning the same
+script is not a reproduction.
+- Why: two hundred agreeing digits have been printed for a false identity.
+
+## Finite data
+
+**An estimate must be stable when the data is enlarged.** A quantity estimated from finite
+data (a maximum over an initial range, a density, a growth rate, a limiting distribution)
+is reported only after computing it at size L and again at 2L (or a comparable step up)
+and seeing it not change materially. When the quantity is expected to move slowly
+(logarithmic growth or convergence), one doubling shows nothing: compute it at three or more
+sizes spread on a logarithmic scale, report the trend against the expected rate, and do not
+call it stable.
+- Why: a maximum over the first L terms or a density from L samples can look settled and
+  move at 2L; one size gives no way to tell.
+- Not for: exact finite quantities (a count up to a stated bound), which you report with
+  their bound.
+
+**A capped or convenient sample is biased.** A cost cap does not drop cases at random: it
+drops the expensive ones first, which are often the extreme ones (the largest cases, the
+highest-degree or highest-dimension ones). A sample chosen for convenience (one family, the cases that ran)
+is selected for structure.
+- Why: a rate or trend measured on the cases that completed can reverse once the cap rises.
+- Do: name what the cap dropped, say whether those cases could carry the opposite verdict,
+  and probe at least one over-cap case if it is affordable.
+- Not for: a sweep that is genuinely exhaustive over its stated range.
+
+**Coverage floor.** State in advance what share of the intended cases must complete, record
+how many did, and count each case once up to the natural equivalence (an isomorphism, a
+symmetry of the problem). The driver does that de-duplication{{#if modules.cache}}, with the same
+canonical key as the results cache ([results-cache.md](results-cache.md)){{/if}}; the README's
+*Equivalence* line says which equivalence it uses.
+
+## Guarded runs
+
+Every run that could be expensive goes through the watchdog (`bin/guard-run`, which
+`bin/exp-run` uses), with deliberately small limits at first.
+- When a limit trips (TIMEOUT, EXPLODED-mem, INTERRUPTED): stop; do not raise the
+  limit and retry. Make the run cheaper (smaller case, a cached result, a structural
+  shortcut, a different tool) or propose the larger run to the owner with its estimated
+  cost. Other documents link here for this rule instead of restating it.
+- Why: a limit that trips is information about cost; retrying higher repeats the misjudgment
+  at a larger price.
+- If guard-run warns that the memory limit is NOT enforced (some sandboxes forbid reading
+  process memory), only the time limit protects the run: keep `--time` small, and say in the
+  run's record that memory was unguarded.
+{{#if harness.cap.background_callback}}
+- A `--full` or `--deep` run that takes more than about two minutes runs as a tracked background job whose
+  completion you wait for{{#if modules.launch}} (see the `launch-preflight` skill){{/if}}; never a detached process nobody waits on.
+{{else}}
+- A `--full` or `--deep` run that takes more than about two minutes runs in the foreground, and you wait for
+  it and report its result{{#if modules.launch}} (see the `launch-preflight` skill){{/if}}; never a detached process nobody waits on.
+{{/if}}
+
+## Reading results
+
+**Analyze cold.** Interpret a run bundle from the bundle alone, by a reader who did not
+build the driver: a fresh session, or a fresh agent dispatched with only the run's folder. It writes
+`analysis.md` in the bundle.
+- Why: the session that built the driver reads its output through what it expected to see.
+- Not for: the smoke run, which the builder reads at once to fix the driver.
+
+**Rigorous invariant over proxy.** If an exact invariant decides the question, it is the
+verdict; a sampled or finite-prefix proxy is only a cross-check, valid where it has
+resolution. Do not tune a proxy until it agrees.
+
+**A result about one family is a conjecture about the others.** Name the family the
+experiment covered in every statement of its result.
+
+**Look up a structure before building on it.** When a run turns up a structure (a sequence,
+a closed form, a recurrence, a pattern in a table), ask what it is known as: transform it if
+needed (differences, ratios, a generating function), look it up, and search under candidate
+names before treating it as new. Record what the lookup found in *Findings*.
+- Why: a sequence or pattern found by computation is often already in the literature, and
+  the name brings the theory that explains it.
+
+## Reproducibility
+
+`bin/exp-run` records the command, git commit, tool versions, limits and output of every
+run. Commit the driver and the bundle; a result that cannot be re-run from the repository
+is an anecdote.

@@ -1,0 +1,40 @@
+---
+object: <the object of study: a named sequence, a family of graphs, a class of curves, ...>
+ids: <catalog identifiers, if any (e.g. an OEIS A-number, an LMFDB label); else none>
+---
+# <object>
+
+<One or two sentences: what the object is and why this project cares about it.>
+
+## Results
+
+Entries are added to, not rewritten. When a later dated note finds a result wrong,
+superseded or narrower, prefix its heading with `SUPERSEDED <date>:` or `NARROWED <date>:`
+and keep the original wording.
+
+### R1. <the statement, with the source's hypotheses; never stronger than the source>
+- **kind:** proved | observed | conjectured   (what the SOURCE says it is)
+- **scope:** <exactly which objects or parameters the source covers>
+- **source:** <authors, title, year> · <theorem / section / page> · accessed <YYYY-MM-DD>
+- **read:** firsthand | corroborated (<A>; <B>) | checked (<how>)   (did you read the statement in the source itself, in two independent restatements, or verify it yourself? A result known only from a summary stays under Seeds to verify.)
+{{#if modules.conjectures}}
+- **bearing:** `settles:` or `suggests:` followed by a link to the conjecture file
+  (`../conjectures/CNNN-slug.md`), or none
+{{/if}}
+
+## Seeds to verify
+
+Claims seen without a source you have read (a catalog comment, an unreferenced formula, a
+remark in a talk or a summary). Not facts: verify one, or find its source, before moving it
+up to Results.
+
+- <claim> (seen in: <where>, accessed <YYYY-MM-DD>)
+{{#if modules.conjectures}}
+
+## Conjecture seeds
+
+Patterns in the results above worth stating as conjectures (register them with the
+`new-conjecture` skill, then link them here with `suggests:`).
+
+- <pattern>
+{{/if}}

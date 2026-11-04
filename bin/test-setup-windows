@@ -1,0 +1,70 @@
+#!/bin/bash
+# Check setup-windows.ps1 without Windows: parse it with PowerShell's own parser, then run it
+# in PowerShell 7 on Linux (Docker) against a stand-in wsl.exe (tests/windows/wsl.exe).
+# This covers the script's logic and the hand-off to setup.sh, not real WSL or Windows
+# PowerShell 5.1.
+cd "$(dirname "$0")/.." || exit 1
+img=mcr.microsoft.com/dotnet/sdk:8.0   # includes PowerShell 7; native on ARM and x86
+status=0
+check() {  # [VAR=value …] check NAME EXPECTED-TEXT EXPECTED-RC LIST [ps1 args]
+  name=$1 want=$2 want_rc=$3 list=$4; shift 4
+  out=$(docker run --rm -e FAKE_WSL_LIST="$list" -e FAKE_WSL_UID="${FAKE_WSL_UID:-1000}" \
+    -e FAKE_WSL_OLD="${FAKE_WSL_OLD:-}" -e FAKE_WSL_PROBE="${FAKE_WSL_PROBE:-}" \
+    -e FAKE_WSL_BOM="${FAKE_WSL_BOM:-}" -e INIT_MATH_TEST_VIRT="${INIT_MATH_TEST_VIRT-on}" -e ANSWER="${ANSWER:-}" \
+    -v "$PWD:/src:ro" "$img" bash -c '
+    set -e
+    mkdir -p /w && cp /src/setup-windows.ps1 /w/
+    sed "s/\$/\r/" /src/setup.sh > /w/setup.sh            # Windows line endings
+    cp /src/tests/windows/wsl.exe /usr/local/bin/wsl.exe
+    set +e
+    printf "%s\n" "$ANSWER" | pwsh -NoProfile -File /w/setup-windows.ps1 '"$*"'
+    rc=$?
+    echo "RC=$rc"
+    if [ -f ~/init-math-setup.sh ]; then
+      if grep -q "$(printf "\r")" ~/init-math-setup.sh; then echo "COPY-HAS-CR"; else echo "COPY-CLEAN"; fi
+      if [ "$(head -c 2 ~/init-math-setup.sh)" = "#!" ]; then echo "COPY-STARTS-OK"; else echo "COPY-BAD-START"; fi
+    fi
+    cat /tmp/wsl.log 2>/dev/null' 2>&1)
+  if printf '%s' "$out" | grep -qF -- "$want" && printf '%s' "$out" | grep -q "^RC=$want_rc\$"; then
+    echo "PASS  $name"
+  else
+    echo "FAIL  $name"; printf '%s\n' "$out" | tail -25 | sed 's/^/      /'; status=1
+  fi
+}
+docker run --rm -v "$PWD:/src:ro" "$img" pwsh -NoProfile -Command '
+  $t = $null; $e = $null
+  [void][System.Management.Automation.Language.Parser]::ParseFile("/src/setup-windows.ps1", [ref]$t, [ref]$e)
+  if ($e.Count) { $e | ForEach-Object { "PARSE ERROR: $_" }; exit 1 } else { "PASS  parses" }' || status=1
+
+# Windows ready: the copy and the hand-off to setup.sh.
+check "UTF-16 list, skips docker-desktop, picks Ubuntu 24.04" "Using the Linux distribution 'Ubuntu-24.04'" 1 ubuntu -Check
+check "everything ready shows OK rows" "OK         WSL is up to date" 1 ubuntu -Check
+check "copied file has no carriage returns" "COPY-CLEAN" 1 ubuntu -Check
+FAKE_WSL_BOM=1 check "byte-order mark from Windows PowerShell is removed" "COPY-STARTS-OK" 1 ubuntu -Check
+check "setup.sh ran inside" "Checking this computer" 1 ubuntu -Check
+check "tells setup.sh it came from Windows" "(without -Check)" 1 ubuntu -Check
+check "failure says how to rerun from PowerShell" "Setup is not finished" 1 ubuntu -Check
+check "failure says where the log is" "init-math-setup-windows.log" 1 ubuntu -Check
+
+# Windows not ready: each item appears in the up-front list.
+check "no Linux yet: plans Ubuntu 24.04" "no Linux distribution yet; setup installs Ubuntu 24.04" 1 none -Check
+FAKE_WSL_OLD=1 check "WSL built into Windows 10 is caught" "WSL is the old version built into Windows 10" 1 ubuntu -Check
+INIT_MATH_TEST_VIRT=vmp-off check "Virtual Machine Platform off is caught" "the Virtual Machine Platform feature is off" 1 ubuntu -Check
+INIT_MATH_TEST_VIRT=firmware-off check "firmware virtualization off is caught" "NEEDS YOU  virtualization appears to be off" 1 ubuntu -Check
+check "WSL 1: plans conversion" "runs on WSL version 1; setup converts it" 1 wsl1 -Check
+FAKE_WSL_PROBE="ID=ubuntu VER=16.04 PY=3.5 UID=1000" check "old Ubuntu on WSL 1: new one next to it, no conversion" \
+  "your 'Ubuntu' (ubuntu 16.04, Python 3.5) is too old for init-math; setup installs Ubuntu 24.04 next to it" 1 wsl1 -Check
+FAKE_WSL_PROBE="ID=ubuntu VER=20.04 PY=3.8 UID=1000" check "old Ubuntu on WSL 2: new one next to it" \
+  "setup installs Ubuntu 24.04 next to it" 1 old -Check
+FAKE_WSL_UID=0 check "Ubuntu without its own user is caught" "has no Linux user yet" 1 ubuntu -Check
+FAKE_WSL_OLD=1 INIT_MATH_TEST_VIRT=firmware-off check "plan lists the steps in order, restart included" \
+  "During that restart, turn on virtualization in the firmware" 0 none -PlanOnly
+INIT_MATH_TEST_VIRT=vmp-off check "an unasked WSL 2 Linux is checked after the restart" \
+  "whether it is new enough is checked once virtualization is on" 1 old -Check
+INIT_MATH_TEST_VIRT=unknown check "virtualization unknown is not a blocker" "could not check virtualization" 1 ubuntu -Check
+check "plan-only on a ready Windows says how to carry it out" "To carry out the plan, run (without -PlanOnly)" 0 ubuntu -PlanOnly
+INIT_MATH_TEST_VIRT=firmware-off check "firmware off: row does not claim the feature is off" \
+  "virtualization is not running; setup makes sure the Virtual Machine Platform feature is on" 1 ubuntu -Check
+check "declining the plan changes nothing" "Nothing was changed." 1 none
+ANSWER=y check "accepting installs Ubuntu 24.04 in your own account" "wsl.exe --install -d Ubuntu-24.04" 0 none
+exit $status

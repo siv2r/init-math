@@ -1,0 +1,506 @@
+#!/usr/bin/env python3
+"""Record a reviewer's verdict on a file's current content.
+
+selftest: yes
+
+Usage:
+  bin/gate-stamp <gate> <path> <VERDICT> -
+      Record that reviewer <gate> returned <VERDICT> on <path> as it is now, with the
+      reviewer's full reply, copied word for word, on standard input
+      (e.g. a here-document). The text is kept in the stamp, so no file is needed.
+  bin/gate-stamp <gate> <path> <VERDICT> <excerpt-file>
+      The same, reading the verdict text from a file.
+  Record every verdict, passing or not: only a passing one satisfies the commit gate, and
+  the others are the review history. Options (before the gate):
+    --kind review|last-look|exchange   what the review was (default review); only `review`
+                                       counts toward the re-review limit, and a `last-look`
+                                       stamp never stands in for a review
+    --caveat-ok "<reason>"             a passing excerpt that holds a caveat phrase
+                                       ("sketched", "not verified", ...) is refused unless
+                                       the reason quotes each such line of the excerpt,
+                                       word for word, and says why it does not apply
+  bin/gate-stamp --list [path]      show the stamps (for one file, or all). For one file it
+      also shows dispatches with no verdict recorded, and each gate's reviews this cycle.
+  bin/gate-stamp --new-cycle <path> "<what is new>"
+      start a new review cycle for <path> (the claim was recorded, or new evidence or a new
+      proof arrived); the re-review count starts again from zero
+  bin/gate-stamp [--kind last-look] --check <gate> <path>
+      exit 0 if the file's current content carries a valid stamp from <gate>, else 1. A
+      last-look stamp counts only with --kind last-look; without it, only a review or an
+      exchange counts
+  bin/gate-stamp --root DIR ...     act on the project at DIR (default: this script's project)
+  bin/gate-stamp --selftest         run the built-in tests in a temporary directory
+
+It REFUSES (exit 1) when:
+  * the gate never received this exact content: no row in .gates/dispatches.jsonl for
+    (gate, path, current content hash). The dispatch log is written automatically when a
+    reviewer is dispatched with the file named in its brief. Re-dispatch on the current text.
+  * the verdict is neither a passing nor a failing verdict of that gate ([gates.verdicts] and
+    [gates.failing] in project.toml): a typo is refused, not logged.
+  * the excerpt file does not contain the verdict word.
+  * a passing excerpt holds a caveat phrase ([gates] caveat_phrases) and no --caveat-ok
+    reason quotes the line it is on. The scan stops at an "Attack surface" line (the
+    red-team lists what is uncovered there) and skips a line the reviewer ends with
+    "minor" (fixable without anyone reviewing the fix), except under the proof-referee's
+    `CLEAN`, which says nothing is left to fix (minor points belong under `CLEAN-MINOR`).
+
+A stamp is appended to .gates/stamps.jsonl as {id, ts, gate, path, blob, verdict, pass,
+kind, excerpt[, caveat_ok]}; a cycle marker to .gates/cycles.jsonl as {id, ts, path, why}.
+Both .gates files are append-only and union-merged across branches: rows may repeat or be
+out of order, so everything here matches rows as a set and de-duplicates by `id`.
+
+This is a reminder with evidence, not security: anyone can edit the files by hand. The
+pre-commit check (.githooks/pre-commit) reads the stamps. Explained in
+docs/discipline/commit-gate.md.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+import uuid
+from pathlib import Path
+
+DEFAULT_VERDICTS = {
+    "claim-auditor": ["SOUND"],
+    "proof-referee": ["CLEAN", "CLEAN-MINOR"],
+    "red-team": ["SURVIVED"],
+    "cold-reader": ["SELF-CONTAINED", "SELF-CONTAINED-MINOR"],
+    "expositor": ["READER-READY"],
+    "provenance": ["ATTRIBUTION-CLEAN"],
+}
+DEFAULT_FAILING = {
+    "claim-auditor": ["OVER-CLAIMED", "UNSUPPORTED", "INCONSISTENT"],
+    "proof-referee": ["NEEDS-WORK"],
+    "red-team": ["REFUTED", "NARROWED", "INCONCLUSIVE"],
+    "cold-reader": ["NEEDS-CONTEXT"],
+    "expositor": ["NEEDS-WORK"],
+    "provenance": ["NEEDS-CITATIONS"],
+}
+# Phrases in a reviewer's own report that say something is not established. "gap" alone
+# and "conditional on" are left out: in saved passing reports they were the mathematical
+# noun and a cited conditional-on: line, never a caveat.
+DEFAULT_CAVEATS = [r"sketch(ed)?", r"not (yet )?(verified|certified|checked|proved)",
+                   r"unproved", r"incorrect", r"from memory", r"open gap", r"gap remains",
+                   r"not rigorous"]
+KINDS = ("review", "last-look", "exchange")
+EXCERPT_MAX = 2000
+FAIL_EXCERPT_MAX = 500
+
+
+def load_cfg(root: Path) -> dict:
+    try:
+        with open(root / "project.toml", "rb") as f:
+            return tomllib.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def verdicts(root: Path) -> dict[str, list[str]]:
+    v = load_cfg(root).get("gates", {}).get("verdicts") or {}
+    return {k: [str(x).upper() for x in vals] for k, vals in v.items()} or DEFAULT_VERDICTS
+
+
+def failing(root: Path) -> dict[str, list[str]]:
+    v = load_cfg(root).get("gates", {}).get("failing") or {}
+    out = {k: list(vals) for k, vals in DEFAULT_FAILING.items()}
+    out.update({k: [str(x).upper() for x in vals] for k, vals in v.items()})
+    return out
+
+
+# A passing verdict that says there is nothing left to fix: a line marked minor under it is a
+# caveat like any other (the reviewer should have said CLEAN-MINOR).
+NO_MINOR = {"CLEAN"}
+
+
+def caveat_lines(root: Path, excerpt: str, verdict: str = "") -> list[str]:
+    """Lines of a passing excerpt that hold a caveat phrase, up to an Attack surface line."""
+    pats = load_cfg(root).get("gates", {}).get("caveat_phrases")
+    if pats is None:
+        pats = DEFAULT_CAVEATS
+    if not pats:
+        return []
+    rx = re.compile(r"\b(" + "|".join(f"(?:{p})" for p in pats) + r")\b", re.I)
+    hits = []
+    for line in excerpt.splitlines():
+        if re.match(r"^\W*attack surface", line, re.I):
+            break
+        minor = re.search(r"\bminor\W*$", line, re.I) and verdict not in NO_MINOR
+        if rx.search(line) and not minor:
+            hits.append(line.strip())  # a line the reviewer marks minor is fixable without review
+    return hits
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.split())
+
+
+def blob_of(root: Path, rel: str) -> str:
+    try:
+        r = subprocess.run(["git", "hash-object", "--", rel], cwd=root, capture_output=True,
+                           text=True, timeout=20)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    data = (root / rel).read_bytes()
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def read_rows(path: Path) -> list[dict]:
+    """Rows of a .jsonl file, de-duplicated by id; unparseable lines are skipped."""
+    rows, seen = [], set()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return rows
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(r, dict):
+            continue
+        key = r.get("id") or json.dumps(r, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(r)
+    return rows
+
+
+def rel_path(root: Path, p: str) -> str:
+    full = (Path.cwd() / p).resolve() if not Path(p).is_absolute() else Path(p).resolve()
+    if not full.is_file():
+        full = (root / p).resolve()
+    if not full.is_file():
+        raise SystemExit(f"gate-stamp: no such file: {p}")
+    try:
+        return full.relative_to(root.resolve()).as_posix()
+    except ValueError:
+        raise SystemExit(f"gate-stamp: {p} is outside the project {root}")
+
+
+def stamp(root: Path, gate: str, path: str, verdict: str, excerpt_file: str,
+          kind: str = "review", caveat_ok: str | None = None) -> int:
+    v = verdicts(root)
+    if gate not in v:
+        print(f"gate-stamp: unknown gate '{gate}'. Known: {', '.join(sorted(v))} "
+              f"([gates.verdicts] in project.toml).", file=sys.stderr)
+        return 1
+    if kind not in KINDS:
+        print(f"gate-stamp: unknown --kind '{kind}' (one of: {', '.join(KINDS)}).",
+              file=sys.stderr)
+        return 1
+    verdict = verdict.upper()
+    fails = failing(root).get(gate, [])
+    passed = verdict in v[gate]
+    if not passed and verdict not in fails:
+        print(f"gate-stamp: '{verdict}' is not a verdict of {gate} (passing: "
+              f"{', '.join(v[gate])}; failing: {', '.join(fails) or 'none listed'}). "
+              f"Copy the reviewer's verdict word exactly.", file=sys.stderr)
+        return 1
+    try:
+        excerpt = (sys.stdin.read() if excerpt_file == "-"
+                   else Path(excerpt_file).read_text(encoding="utf-8"))
+    except OSError as e:
+        print(f"gate-stamp: cannot read excerpt file: {e}", file=sys.stderr)
+        return 1
+    if not re.search(rf"(?<![\w-]){re.escape(verdict)}(?![\w-])", excerpt.upper()):
+        print(f"gate-stamp: the excerpt does not contain the verdict '{verdict}'. Copy the "
+              f"reviewer's verdict line into it, word for word.", file=sys.stderr)
+        return 1
+    if passed:
+        hits = caveat_lines(root, excerpt, verdict)
+        missing = [h for h in hits if _norm(h) not in _norm(caveat_ok or "")]
+        if missing:
+            print("gate-stamp: refused. The reviewer's own report says something is not "
+                  "established, on these lines:", file=sys.stderr)
+            for h in missing:
+                print(f"  {h}", file=sys.stderr)
+            print("If the verdict ignores them, it does not pass: fix and re-dispatch. If a "
+                  "line does not apply (a gap that was closed, a phrase about something "
+                  "else), stamp with --caveat-ok \"<the line, quoted word for word> — <why it "
+                  "does not apply>\"; the reason is kept and shown to the owner.",
+                  file=sys.stderr)
+            return 1
+    rel = rel_path(root, path)
+    blob = blob_of(root, rel)
+    gdir = root / ".gates"
+    sent = [r for r in read_rows(gdir / "dispatches.jsonl")
+            if r.get("gate") == gate and r.get("path") == rel]
+    if not any(r.get("blob") == blob for r in sent):
+        why = ("it was dispatched on an earlier version; the file changed since"
+               if sent else "no dispatch of this gate on this file is recorded")
+        print(f"gate-stamp: refused. {gate} never received {rel} as it is now ({why}). "
+              f"Dispatch {gate} again with {rel} named in its brief, then stamp its verdict.",
+              file=sys.stderr)
+        return 1
+    gdir.mkdir(exist_ok=True)
+    row = {"id": uuid.uuid4().hex[:16], "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "gate": gate,
+           "path": rel, "blob": blob, "verdict": verdict, "pass": passed, "kind": kind,
+           "excerpt": excerpt[:EXCERPT_MAX if passed else FAIL_EXCERPT_MAX]}
+    if caveat_ok:
+        row["caveat_ok"] = caveat_ok
+    with open(gdir / "stamps.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, sort_keys=True) + "\n")
+    word = "stamped" if passed else "recorded (not passing)"
+    print(f"{word}: {gate} {verdict} on {rel} @ {blob[:10]}")
+    return 0
+
+
+def new_cycle(root: Path, path: str, why: str) -> int:
+    rel = rel_path(root, path)
+    gdir = root / ".gates"
+    gdir.mkdir(exist_ok=True)
+    row = {"id": uuid.uuid4().hex[:16], "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+           "path": rel, "why": why}
+    with open(gdir / "cycles.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(row, sort_keys=True) + "\n")
+    print(f"new review cycle for {rel}: {why}")
+    return 0
+
+
+def valid(root: Path, gate: str, rel: str, blob: str, kind: str = "review") -> bool:
+    """A passing stamp and a dispatch for this content. A last look answers one question, so
+    it counts only as a last look; a review or an exchange counts as a review."""
+    v = verdicts(root)
+    gdir = root / ".gates"
+    last = kind == "last-look"
+    ok_stamp = any(r.get("gate") == gate and r.get("path") == rel and r.get("blob") == blob
+                   and str(r.get("verdict", "")).upper() in v.get(gate, [])
+                   and (r.get("kind", "review") == "last-look") == last
+                   for r in read_rows(gdir / "stamps.jsonl"))
+    ok_sent = any(r.get("gate") == gate and r.get("path") == rel and r.get("blob") == blob
+                  for r in read_rows(gdir / "dispatches.jsonl"))
+    return ok_stamp and ok_sent
+
+
+def list_stamps(root: Path, path: str | None) -> int:
+    rel = rel_path(root, path) if path else None
+    gdir = root / ".gates"
+    rows = sorted(read_rows(gdir / "stamps.jsonl"), key=lambda r: r.get("ts", ""))
+    v = verdicts(root)
+    for r in rows:
+        if rel and r.get("path") != rel:
+            continue
+        cur = ""
+        if (root / r.get("path", "")).is_file():
+            cur = "current" if blob_of(root, r["path"]) == r.get("blob") else "stale"
+        ok = str(r.get("verdict", "")).upper() in v.get(r.get("gate", ""), [])
+        kind = r.get("kind", "review")
+        extra = f"  caveat-ok: {r['caveat_ok']}" if r.get("caveat_ok") else ""
+        print(f"{r.get('ts', '?')}  {r.get('gate', '?'):<15} {r.get('verdict', '?'):<18} "
+              f"{'pass' if ok else 'fail'}  {kind:<9} {r.get('path', '?')}  "
+              f"{str(r.get('blob', ''))[:10]} {cur}{extra}")
+    if not rel:
+        return 0
+    mine = [r for r in rows if r.get("path") == rel]
+    for d in sorted(read_rows(gdir / "dispatches.jsonl"), key=lambda r: r.get("ts", "")):
+        if d.get("path") != rel or d.get("gate") not in v:
+            continue
+        if not any(r.get("gate") == d["gate"] and r.get("blob") == d.get("blob") for r in mine):
+            print(f"{d.get('ts', '?')}  {d['gate']:<15} dispatched, no verdict recorded  "
+                  f"{rel}  {str(d.get('blob', ''))[:10]}")
+    marks = [c.get("ts", "") for c in read_rows(gdir / "cycles.jsonl") if c.get("path") == rel]
+    since = max(marks) if marks else ""
+    counts: dict[str, int] = {}
+    for r in mine:
+        if r.get("kind", "review") == "review" and r.get("ts", "") >= since:
+            counts[r["gate"]] = counts.get(r["gate"], 0) + 1
+    if counts:
+        start = f"since {since}" if since else "no --new-cycle yet"
+        print(f"reviews this cycle ({start}): "
+              + ", ".join(f"{g} {n}" for g, n in sorted(counts.items())))
+    return 0
+
+
+def selftest() -> int:
+    me = Path(__file__).resolve()
+    fails = []
+    with tempfile.TemporaryDirectory() as t:
+        root = Path(t)
+        (root / "bin").mkdir()
+        (root / "notes.md").write_text("Theorem. Every x is y.\n")
+        ex = root / "excerpt.txt"
+        ex.write_text("Verdict: SOUND. No over-claims found.\n")
+
+        def call(*args):
+            r = subprocess.run([sys.executable, str(me), "--root", str(root), *args],
+                               capture_output=True, text=True, cwd=root, timeout=60)
+            return r.returncode, r.stdout + r.stderr
+
+        rc, out = call("claim-auditor", "notes.md", "SOUND", str(ex))
+        if rc == 0 or "never received" not in out:
+            fails.append(f"stamp without dispatch should refuse: {rc} {out}")
+        blob = blob_of(root, "notes.md")
+        raw = hashlib.sha1(b"blob %d\0" % len(b"Theorem. Every x is y.\n")
+                           + b"Theorem. Every x is y.\n").hexdigest()
+        if blob != raw:
+            fails.append(f"blob hash differs from git's blob id: {blob} vs {raw}")
+        (root / ".gates").mkdir()
+        row = {"id": "a1", "gate": "claim-auditor", "path": "notes.md", "blob": blob, "ts": "x"}
+        (root / ".gates" / "dispatches.jsonl").write_text(json.dumps(row) + "\n" + json.dumps(row) + "\n")
+        fail_ex = root / "fail.txt"
+        fail_ex.write_text("Verdict: OVER-CLAIMED. Line 3 states it in general.\n")
+        rc, out = call("claim-auditor", "notes.md", "OVER-CLAIMED", str(fail_ex))
+        if rc != 0 or "not passing" not in out:
+            fails.append(f"failing verdict should be recorded: {rc} {out}")
+        if valid(root, "claim-auditor", "notes.md", blob):
+            fails.append("a failing verdict must not satisfy the gate")
+        rc, out = call("claim-auditor", "notes.md", "OVERCLAIMED", str(fail_ex))
+        if rc == 0 or "not a verdict of" not in out:
+            fails.append(f"an unknown verdict word should refuse: {rc} {out}")
+        cav = root / "cav.txt"
+        cav.write_text("Verdict: SOUND.\nStep 4 is sketched, not proved.\n")
+        rc, out = call("claim-auditor", "notes.md", "SOUND", str(cav))
+        if rc == 0 or "not established" not in out:
+            fails.append(f"a caveat in a passing excerpt should refuse: {rc} {out}")
+        rc, out = call("--caveat-ok", "it applies to an earlier draft", "claim-auditor",
+                       "notes.md", "SOUND", str(cav))
+        if rc == 0:
+            fails.append("a --caveat-ok reason that does not quote the line should refuse")
+        rc, out = call("--caveat-ok", "Step 4 is sketched, not proved. — the step was "
+                       "rewritten in full since", "claim-auditor", "notes.md", "SOUND", str(cav))
+        if rc != 0 or "rewritten in full" not in (root / ".gates" / "stamps.jsonl").read_text():
+            fails.append(f"a quoting --caveat-ok should stamp and keep the reason: {rc} {out}")
+        rt = root / "rt.txt"
+        rt.write_text("Verdict: SURVIVED\n- **Attack surface**: degree 7 not verified.\n")
+        (root / ".gates" / "dispatches.jsonl").open("a").write(json.dumps(
+            {"id": "b1", "gate": "red-team", "path": "notes.md", "blob": blob, "ts": "x"}) + "\n")
+        rc, out = call("red-team", "notes.md", "SURVIVED", str(rt))
+        if rc != 0:
+            fails.append(f"a caveat after the Attack surface line should not refuse: {rc} {out}")
+        minor = root / "minor.txt"
+        minor.write_text("Verdict: CLEAN-MINOR\n- [8] p.md:3 — Lemma 2 is unproved and uncited — cite it — minor\n")
+        (root / ".gates" / "dispatches.jsonl").open("a").write(json.dumps(
+            {"id": "m1", "gate": "proof-referee", "path": "notes.md", "blob": blob, "ts": "x"}) + "\n")
+        rc, out = call("proof-referee", "notes.md", "CLEAN", str(minor))
+        if rc == 0:
+            fails.append(f"CLEAN is not in a CLEAN-MINOR excerpt: {out}")
+        rc, out = call("proof-referee", "notes.md", "CLEAN-MINOR", str(minor))
+        if rc != 0:
+            fails.append(f"a caveat on a line marked minor should not refuse under CLEAN-MINOR: {rc} {out}")
+        minor.write_text("Verdict: CLEAN\n- [8] p.md:3 — Lemma 2 is unproved and uncited — cite it — minor\n")
+        rc, out = call("proof-referee", "notes.md", "CLEAN", str(minor))
+        if rc == 0 or "refused" not in out:
+            fails.append(f"under CLEAN a caveat marked minor is still a caveat: {rc} {out}")
+        gap = root / "gap.txt"
+        gap.write_text("Verdict: SOUND. No gap; kept conditional on the recalled bound.\n")
+        rc, out = call("--kind", "last-look", "claim-auditor", "notes.md", "SOUND", str(gap))
+        if rc != 0:
+            fails.append(f"'gap' and 'conditional on' alone should not refuse: {rc} {out}")
+        (root / "ll.md").write_text("Theorem. Every x is w.\n")
+        llb = blob_of(root, "ll.md")
+        (root / ".gates" / "dispatches.jsonl").open("a").write(json.dumps(
+            {"id": "l1", "gate": "claim-auditor", "path": "ll.md", "blob": llb, "ts": "x"}) + "\n")
+        rc, out = call("--kind", "last-look", "claim-auditor", "ll.md", "SOUND", str(ex))
+        if rc != 0 or valid(root, "claim-auditor", "ll.md", llb) \
+                or not valid(root, "claim-auditor", "ll.md", llb, "last-look"):
+            fails.append(f"a last-look stamp should count as a last look only: {rc} {out}")
+        rc, out = call("--kind", "last-look", "--check", "claim-auditor", "ll.md")
+        if rc != 0:
+            fails.append(f"--kind last-look --check should find the last look: {out}")
+        bad = root / "bad.txt"
+        bad.write_text("looks fine to me\n")
+        rc, out = call("claim-auditor", "notes.md", "SOUND", str(bad))
+        if rc == 0 or "does not contain" not in out:
+            fails.append(f"excerpt without verdict should refuse: {rc} {out}")
+        rc, out = call("claim-auditor", "notes.md", "sound", str(ex))
+        if rc != 0:
+            fails.append(f"valid stamp should succeed: {rc} {out}")
+        if not valid(root, "claim-auditor", "notes.md", blob):
+            fails.append("stamp not found valid after stamping")
+        (root / "notes.md").write_text("Theorem. Every x is z.\n")
+        if valid(root, "claim-auditor", "notes.md", blob_of(root, "notes.md")):
+            fails.append("stamp still valid after the file changed")
+        rc, out = call("claim-auditor", "notes.md", "SOUND", str(ex))
+        if rc == 0 or "earlier version" not in out:
+            fails.append(f"stale dispatch should refuse: {rc} {out}")
+        rc, out = call("--check", "claim-auditor", "notes.md")
+        if rc == 0:
+            fails.append("--check should fail on changed file")
+        rc, out = call("--list")
+        if rc != 0 or "stale" not in out:
+            fails.append(f"--list should show the stale stamp: {out}")
+        rc, out = call("--list", "notes.md")
+        if "reviews this cycle" not in out or "claim-auditor 3" not in out or "last-look" not in out:
+            fails.append(f"--list <path> should count review-kind stamps only: {out}")
+        call("--new-cycle", "notes.md", "the claim was recorded")
+        time.sleep(1.1)
+        (root / ".gates" / "dispatches.jsonl").open("a").write(json.dumps(
+            {"id": "c1", "gate": "proof-referee", "path": "notes.md",
+             "blob": blob_of(root, "notes.md"), "ts": "y"}) + "\n")
+        rc, out = call("--list", "notes.md")
+        if "claim-auditor 3" in out or "dispatched, no verdict recorded" not in out:
+            fails.append(f"--new-cycle should reset the count; a hole should show: {out}")
+        (root / "notes.md").write_text("Theorem. Every x is y.\n")
+        r = subprocess.run([sys.executable, str(me), "--root", str(root), "claim-auditor",
+                            "notes.md", "SOUND", "-"], input="Verdict: SOUND (from stdin)\n",
+                           capture_output=True, text=True, cwd=root, timeout=60)
+        if r.returncode != 0 or "from stdin" not in (root / ".gates" / "stamps.jsonl").read_text():
+            fails.append(f"stamp from stdin should succeed and keep the text: {r.stdout}{r.stderr}")
+        rc, out = call("no-such-gate", "notes.md", "SOUND", str(ex))
+        if rc == 0:
+            fails.append("unknown gate should refuse")
+    for f in fails:
+        print("FAIL", f)
+    print("gate-stamp selftest:", "FAIL" if fails else "ok")
+    return 1 if fails else 0
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    if argv[0] == "--selftest":
+        return selftest()
+    root = Path(__file__).resolve().parent.parent
+    if argv[0] == "--root":
+        if len(argv) < 2:
+            print("gate-stamp: --root needs a directory", file=sys.stderr)
+            return 2
+        root, argv = Path(argv[1]).resolve(), argv[2:]
+    if not argv:
+        print(__doc__)
+        return 2
+    kind, caveat_ok = "review", None
+    while argv and argv[0] in ("--kind", "--caveat-ok"):
+        if len(argv) < 2:
+            print(f"gate-stamp: {argv[0]} needs a value", file=sys.stderr)
+            return 2
+        if argv[0] == "--kind":
+            kind = argv[1]
+        else:
+            caveat_ok = argv[1]
+        argv = argv[2:]
+    if argv and argv[0] == "--new-cycle":
+        if len(argv) != 3:
+            print('usage: bin/gate-stamp --new-cycle <path> "<what is new>"', file=sys.stderr)
+            return 2
+        return new_cycle(root, argv[1], argv[2])
+    if argv[0] == "--list":
+        return list_stamps(root, argv[1] if len(argv) > 1 else None)
+    if argv[0] == "--check":
+        if len(argv) != 3:
+            print("usage: bin/gate-stamp --check <gate> <path>", file=sys.stderr)
+            return 2
+        rel = rel_path(root, argv[2])
+        return 0 if valid(root, argv[1], rel, blob_of(root, rel), kind) else 1
+    if len(argv) != 4:
+        print("usage: bin/gate-stamp [--kind K] [--caveat-ok \"<reason>\"] <gate> <path> "
+              "<VERDICT> <excerpt-file|->", file=sys.stderr)
+        return 2
+    return stamp(root, *argv, kind=kind, caveat_ok=caveat_ok)
+
+
+if __name__ == "__main__":
+    if sys.version_info < (3, 11):
+        sys.exit("gate-stamp needs Python >= 3.11")
+    sys.exit(main(sys.argv[1:]))

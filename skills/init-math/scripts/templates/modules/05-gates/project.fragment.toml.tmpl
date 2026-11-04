@@ -1,0 +1,5 @@
+[arguments]
+# Labels for an argued claim (docs/discipline/informal-arguments.md, "Labels"): what kind of
+# support it has. Combined with " + ". Read by bin/hedge-scan. Add your field's own kinds
+# here; model-only takes the model in parentheses, analogy (relay: ...) what transfers.
+labels = [{{#each toml.arguments.labels}}{{.}}{{#if !@last}}, {{/if}}{{/each}}]

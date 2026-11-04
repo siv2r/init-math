@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""wait-until-done: block until a long job has finished, then exit; one tracked waiter.
+
+    bin/wait-until-done --run RUN_DIR      [--max-min M] [--poll S]   (a bin/bg-run --runs record)
+    bin/wait-until-done --pid PID          [--max-min M] [--poll S]
+    bin/wait-until-done --file PATH        [--max-min M] [--poll S]   (wait until PATH exists)
+    bin/wait-until-done PATTERN            [--max-min M] [--poll S]   (no process matches PATTERN)
+
+Exits 0 when the wait is over, 2 on timeout (default 120 minutes; polling every 60 s), 1 if
+processes cannot be listed. Exit 0 says nothing about the job's own result: with --run, the
+printed line gives its exit code, or says it died without one.
+Prefer --run or --pid: they cannot be confused by another process. The PATTERN mode
+matches a regular expression against full command lines, and ignores this waiter and
+the shells that launched it (whose command lines contain the pattern too), which is
+the classic way a hand-written `pgrep` loop waits forever.
+selftest: yes
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _procs(proc: Path = Path("/proc"), use_ps: bool = True) -> list[tuple[int, int, str]]:
+    """(pid, ppid, command line) for every process: `ps`, else Linux /proc."""
+    rows = []
+    try:
+        if not use_ps:
+            raise OSError("ps disabled")
+        out = subprocess.run(["ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "args="],
+                             capture_output=True, text=True, check=True).stdout
+        for line in out.splitlines():
+            parts = line.strip().split(None, 2)
+            if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+                rows.append((int(parts[0]), int(parts[1]), parts[2] if len(parts) > 2 else ""))
+        return rows
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if not proc.is_dir():  # no `ps` and no /proc: say so rather than report "0 matching"
+        sys.exit("wait-until-done: cannot list processes (no `ps`, no /proc); use --pid or --run")
+    for d in proc.iterdir():  # no `ps` (e.g. a slim container): read /proc directly
+        if not d.name.isdigit():
+            continue
+        try:
+            stat = (d / "stat").read_text()
+            ppid = int(stat[stat.rindex(")") + 2:].split()[1])
+            args = (d / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
+            rows.append((int(d.name), ppid, args))
+        except (OSError, ValueError, IndexError):
+            continue
+    return rows
+
+
+def _ancestors(rows) -> set[int]:
+    parent = {pid: ppid for pid, ppid, _ in rows}
+    seen, p = set(), os.getpid()
+    while p and p not in seen:
+        seen.add(p)
+        p = parent.get(p, 0)
+    return seen
+
+
+def matching(pattern: str) -> list[tuple[int, str]]:
+    rx = re.compile(pattern)
+    rows = _procs()
+    skip = _ancestors(rows)
+    return [(pid, args) for pid, _pp, args in rows if pid not in skip and rx.search(args)]
+
+
+def done(a) -> tuple[bool, str]:
+    if a.run:
+        rd = Path(a.run)
+        if (rd / "exit_code").exists():
+            return True, f"finished, exit={(rd / 'exit_code').read_text().strip()}"
+        pid_f = rd / "pid"
+        if pid_f.exists() and not _alive(int(pid_f.read_text().strip() or 0)):
+            return True, "process gone WITHOUT an exit code (killed, or the session ended)"
+        return False, "running"
+    if a.pid:
+        return (not _alive(a.pid)), f"pid {a.pid}"
+    if a.file:
+        return Path(a.file).exists(), a.file
+    hits = matching(a.pattern)
+    return (not hits), f"{len(hits)} matching process(es)" + (f", e.g. pid {hits[0][0]}" if hits else "")
+
+
+def wait(a) -> int:
+    start = time.monotonic()
+    deadline = start + a.max_min * 60
+    while True:
+        ok, what = done(a)
+        el = int(time.monotonic() - start)
+        if ok:
+            print(f"[wait-until-done] done after {el // 60}m{el % 60:02d}s: {what}", flush=True)
+            return 0
+        if time.monotonic() >= deadline:
+            print(f"[wait-until-done] TIMEOUT after {a.max_min} min: {what}", flush=True)
+            return 2
+        print(f"[wait-until-done] waiting ({el // 60}m{el % 60:02d}s): {what}", flush=True)
+        time.sleep(min(a.poll, max(0.05, deadline - time.monotonic())))
+
+
+def selftest() -> int:
+    py, me = sys.executable, os.path.abspath(__file__)
+    marker = f"wud-selftest-marker-{os.getpid()}"
+    # A pattern only this waiter's own command line carries must not keep it waiting.
+    r = subprocess.run([py, me, "no-such-process-" + marker, "--poll", "0.1", "--max-min", "0.05"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, ("matched itself", r.stdout)
+    job = subprocess.Popen([py, "-c", "import time,sys; time.sleep(1.0)", marker])
+    r = subprocess.run([py, me, marker, "--poll", "0.1", "--max-min", "0.5"],
+                       capture_output=True, text=True, timeout=60)
+    job.wait()
+    assert r.returncode == 0 and "waiting" in r.stdout, (r.returncode, r.stdout)
+    job = subprocess.Popen([py, "-c", "import time; time.sleep(30)"])
+    try:
+        r = subprocess.run([py, me, "--pid", str(job.pid), "--poll", "0.1", "--max-min", "0.01"],
+                           capture_output=True, text=True, timeout=30)
+        assert r.returncode == 2 and "TIMEOUT" in r.stdout, (r.returncode, r.stdout)
+    finally:
+        job.kill()
+        job.wait()
+    with tempfile.TemporaryDirectory() as d:
+        (Path(d) / "exit_code").write_text("0\n")
+        r = subprocess.run([py, me, "--run", d, "--poll", "0.1", "--max-min", "0.05"],
+                           capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0 and "exit=0" in r.stdout, r.stdout
+    with tempfile.TemporaryDirectory() as d:  # the /proc fallback, on a fake /proc tree
+        fake = Path(d) / "10"
+        fake.mkdir()
+        (fake / "stat").write_text("10 (a (weird) name) S 1 0 0\n")
+        (fake / "cmdline").write_bytes(b"python3\0job.py\0--x\0")
+        rows = _procs(Path(d), use_ps=False)
+        assert rows == [(10, 1, "python3 job.py --x")], rows
+    print("wait-until-done selftest: ok")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["--selftest"]:
+        return selftest()
+    ap = argparse.ArgumentParser(prog="wait-until-done", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("pattern", nargs="?", help="regex over full command lines")
+    ap.add_argument("--run", help="a run directory written by bin/bg-run --runs")
+    ap.add_argument("--pid", type=int)
+    ap.add_argument("--file", help="wait until this path exists")
+    ap.add_argument("--max-min", type=float, default=120.0)
+    ap.add_argument("--poll", type=float, default=60.0, help="seconds between checks")
+    ap.add_argument("--selftest", action="store_true", help="run the built-in check")
+    a = ap.parse_args(argv)
+    if sum(x is not None for x in (a.pattern, a.run, a.pid, a.file)) != 1:
+        ap.error("give exactly one of PATTERN, --run, --pid, --file")
+    return wait(a)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

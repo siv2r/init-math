@@ -1,0 +1,25 @@
+{
+  "cwd": "/tmp/proj",
+  "duration_ms": 275,
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PostToolUse",
+  "permission_mode": "acceptEdits",
+  "prompt_id": "00000000-0000-0000-0000-000000000000",
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "tool_input": {
+    "command": "ls",
+    "description": "List files in current directory"
+  },
+  "tool_name": "Bash",
+  "tool_response": {
+    "interrupted": false,
+    "isImage": false,
+    "noOutputExpected": false,
+    "stderr": "",
+    "stdout": "AGENTS.md\nCLAUDE.md\nGLOSSARY.md\nSEARCH-ALIASES.md\nbin\ndocs\nhooks\nlogs\nprobe\nproject.toml"
+  },
+  "tool_use_id": "toolu_01M34zkRxpiH8vEECnms2YhH",
+  "transcript_path": "/home/user/.claude/projects/-tmp-proj/00000000-0000-0000-0000-000000000000.jsonl"
+}

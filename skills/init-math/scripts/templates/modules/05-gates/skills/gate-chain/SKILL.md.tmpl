@@ -1,0 +1,267 @@
+---
+name: gate-chain
+description: The review procedure for a finding, a proof-bearing document{{#if modules.readers}} or a reader-facing write-up{{/if}} — which reviewer runs, in what order, how to relay their findings, and when a status change may be proposed. Load it the moment you record or report a finding, before the message that reports it as done.
+---
+
+# Gate chain
+
+Why the reviewers exist and why the order is what it is: `docs/discipline/gate-chain.md`.
+
+## The trigger
+
+You just **recorded or reported** a finding. A finding reported in a message counts: no
+hook can see it, so you gate at the report, not at the commit. A self-audit does not
+replace the claim-auditor on a substantive finding. A negative result ("this lead is not
+new", "this approach fails") is high-risk too: over- and under-claiming both live there.
+Do not ask {{owner}} whether to run a gate; it is the default.
+
+**Scale the review to the claim.** The full chain is for a finding that changes something
+durable: a status change, a result or attribution written into a durable document, a proof.
+A single fact settled by one deterministic computation (a gcd, one coefficient, one table
+entry) gets one check, not the chain: re-run it, or confirm it a second independent way,
+and record the command. Add the `claim-auditor` only if the fact changes a status or the
+claim of a durable document; `red-team` only for a strong positive claim or a promotion;
+`proof-referee` only where there is a proof. Sending several reviewers a one-line arithmetic fact spends their cost without
+buying anything a recomputation does not.
+
+## The reviewers (each gets ONE path; none edits or re-runs recorded numbers)
+
+Each reviewer's passing verdict word is in the table in `docs/discipline/gate-chain.md`.
+
+| Reviewer | Question | Use on |
+|---|---|---|
+| `claim-auditor` | Does each conclusion follow from its cited evidence, at the stated scope? | every recorded finding |
+| `proof-referee` | Is the proof rigorous and well written? Is the load-bearing step right? | anything with theorems or proofs |
+| `red-team` | Is it true? | a strong positive claim; every promotion |
+{{#if modules.readers}}
+| `cold-reader` | Can a stranger with zero project context follow it? | documents read outside the project |
+| `expositor` | Can a mathematician learn from and reuse it? | reader-facing write-ups |
+| `provenance` | Which results are new, which are {{owner}}'s prior work, which are classical? | reader-facing write-ups |
+{{/if}}
+
+## The order (cheapest first; run a stage, apply its fixes, then dispatch the next)
+
+- **Finding, no proof**: `bin/hedge-scan` + `bin/define-check` → `claim-auditor` →
+  `red-team` (for a strong positive claim or any promotion) → record.
+- **Proof-bearing document**: `bin/math-hygiene-scan` → the author check (below) → `proof-referee` → `claim-auditor` →
+  `red-team`{{#if modules.readers}} → `cold-reader` (only if read outside the project){{/if}} → record.
+{{#if modules.readers}}
+- **Reader-facing write-up** (drafted from an internal staging document): `bin/math-hygiene-scan`
+  → `proof-referee` → `provenance` → `expositor` → the fidelity check, by a fresh
+  `claim-auditor` given the write-up and the staging document{{#if modules.attempts}} (and the attempt record){{/if}}: does
+  the write-up state anything more strongly than the staging document records? →
+  `cold-reader` → present. Keep the staging document (the honesty record) separate
+  from the write-up, so the write-up is not bent to survive the auditor at the reader's
+  expense. Charter: `docs/discipline/exposition.md`.
+{{/if}}
+
+- **Argued claim used as support** (an argument that convinces but is not a proof):
+  the author's perturbations → **one** `claim-auditor` pass → apply its fixes → record it as
+  evidence{{#if modules.conjectures}}, with an `argued:` line{{/if}}, never as a result. Re-dispatch only if you changed
+  what the claim says beyond the auditor's own fixes (narrowing or hedging as it asked does not
+  count){{#if modules.commit_gate}}, or a status change needs the stamp; recording evidence needs none{{/if}}. Note the
+  auditor's verdict in the work folder's `README.md` and any point left open in the file
+  itself (a later reviewer reads the file, so the verdict stays out of it). The `red-team` (argument mode)
+  runs at promotion: a {{#if modules.conjectures}}status change above weakly-supported{{else}}promotion{{/if}} that the argument supports
+  follows the order above.
+
+The claim-auditor runs before the red-team because it is cheaper and catches what the
+red-team does not: a write-up that over-scopes or contradicts itself.
+
+## Before the first reviewer: the author check{{#if modules.attempts}} (principle: author-check){{/if}}
+
+For a proof, a working construction or an argument with an informal step, the author (you,
+or the worker that wrote it, briefed to do this) first writes these short lines in the work
+folder's `README.md`: not in the file under review, which the reviewer reads, and not in the
+brief:
+
+1. **The hardest step**, and where the document handles it.
+2. **Filler and circular lemmas:** every "standard argument", "clearly", "it is easy to see",
+   and any assumed lemma that restates the goal. Each is either proved, cited, or listed as a
+   gap.
+3. **A pre-mortem:** "assume this is wrong: where is the error most likely?", in two lines.
+4. **A better route?** One line: is there a shorter or more standard argument?
+5. **For an informal step:** two perturbations run on it (`docs/discipline/informal-arguments.md`).
+
+Then dispatch the first reviewer without these lines. The proof-referee and the red-team
+return a `Predicted hardest step:` line, quoting where the document handles the step they
+expected, from the statement alone, to be hardest. Compare it with line 1: if they point at
+different places, re-read the reviewer's step yourself. When it is a crux the author check
+did not name, record an author miss in the work folder's README:
+`author-miss: <the crux> (<date>)`.{{#if modules.program_review}} Program review reads them.{{/if}}
+
+## The brief
+
+A reviewer judges what it is given, so what the brief holds is part of the review. Give
+these labelled lines; a missing one is then visible:
+
+```
+FILE: <path> (lines <a>-<b>; lines before <a> are reviewed definitions, assume correct)
+CLAIM: <the claim, as the file states it>
+{{#if modules.conjectures}}STATUS: <the claimed status>                           (claim-auditor only)
+{{/if}}{{#if modules.questions}}READING: <the intended reading; the rejected ones>      (claim-auditor, red-team; from the ## Reading)
+{{/if}}CITED: <each result the proof relies on: source, theorem number, its statement quoted>   (proof-referee)
+CHANGED: <on a re-review: what changed, and where>
+```
+
+- **Withhold** who wrote or proposed the claim, the exploration that produced it (failed
+  attempts, scratch notes, the author check), the author's confidence, and any earlier
+  reviewer's verdict. A re-review says what changed, not that an earlier pass found it
+  sound: an earlier acceptance is not evidence. What is already recorded in the files the
+  reviewer reads (evidence entries, credence lines) stays; the reviewers are told to judge
+  without it.
+- **Why:** models switch from correct answers to wrong ones after reading what peers
+  concluded, and a model's stated confidence rises when hints toward an answer are added; a
+  famous name attached to an argument makes it more persuasive to mathematicians.
+- **CITED:** quote each relied-on result's statement from its source yourself{{#if modules.firsthand}} (or have `lit-search` fetch it){{/if}}.
+  When the source is out of reach, quote it from two independent restatements and name them
+  (a corroborated reading); the citation stays the original source.
+  The proof-referee reads only what it is given; a relied-on citation with no statement
+  supplied is listed `not checked: statement not supplied` and the verdict is `NEEDS-WORK`.
+{{#if modules.lean}}
+- For a Lean proof, give the `claim-auditor` the line-by-line comparison of the formal
+  statement with the informal claim (`docs/discipline/lean.md`).
+{{/if}}
+{{#if harness.cap.spawn_brief_visible}}
+- A hook (`brief-leak-nudge`) refuses once a reviewer brief that carries a verdict word, a
+  credence line or an "already checked" phrase. If the line is needed (a quoted evidence
+  entry), send the same brief again.
+{{else}}
+- No hook can see a brief on this harness: this section is yours to follow.
+{{/if}}
+
+## The last look before a proof is proposed
+
+Before {{#if modules.conjectures}}proposing a status change to `proved`{{else}}reporting a result to {{owner}} as a complete proof{{/if}}, dispatch the
+`claim-auditor` once more, fresh, with a brief that opens `LAST LOOK` and holds only the
+statement, the final text, the document's own status and gaps section pasted in full, and
+the question: *does the headline or the verdict ignore anything this section lists?* No
+evidence, no earlier verdicts. `OVER-CLAIMED` means it is not proposed. It does not count
+toward the re-review limit{{#if modules.commit_gate}}; name the file in the brief and ask
+for a `Reviewed: <path>` first line (so the dispatch is recorded), tell the auditor to answer
+from the pasted text alone, and stamp it with `--kind last-look`. A last-look stamp never stands in for the full review{{#if modules.conjectures}}, and the
+commit gate wants one before a conjecture is set to `proved` by our own proof{{/if}}{{/if}}.
+
+## The re-review limit
+
+One reviewer gets **three reviews** of one document per cycle: the first and two
+re-reviews. A cycle ends when the claim is recorded; new evidence or a new proof starts a new
+one, a rewording of the claim does not.{{#if modules.commit_gate}} Run `bin/gate-stamp --new-cycle <path> "<what is new>"`
+at either point; `bin/gate-stamp --list <path>` shows the count, so read it rather than
+remembering it.{{/if}} An argued claim kept as evidence gets one pass (above). The last look and
+the exchange in rule 9 do not count.
+
+At the limit, record the claim at the strength the last review supports, list its open
+issues in the file, and propose nothing above that strength. A re-review reads the whole
+changed text, not only the reported defect; a defect that disappeared without your knowing
+why is still listed.
+
+## Rules while running the chain
+
+1. **One gate at a time per document.** Two gates on the same file in parallel means the
+   later one reviews text the first one's fixes have already changed. Gates on different
+   files may run in parallel.
+2. **Headlines first.** Before the claim-auditor, run `bin/hedge-scan <draft>` and make each
+   headline, bold lead and summary line carry the same qualifier as the most hedged body
+   claim it summarizes. Otherwise the gate fails on an over-read header while the body is
+   honest.
+3. **Gate the one canonical draft before copying it anywhere.** The moment you are about to
+   write the same claim into a second durable file, check that the draft is green first.
+4. **Large documents** (about 400 lines or more): give the gate the new section plus a
+   short preamble of the definitions and already-reviewed results it leans on, marked
+   "assume correct, do not re-review". A small document, or one that is entirely the
+   finding, goes whole.
+5. **Relay findings in full.** Paste each issue line to the author as the reviewer wrote
+   it (location, defect, why, fix, major or minor), never a bare item code. Before relaying
+   an issue, open its location and check the text is there; an issue that points at nothing
+   is dropped and noted in the work folder's README. **Check any replacement mathematics a
+   gate proposes before relaying it**; a gate's wording is a reading, not a fact.
+6. **Reviewers without a shell** (claim-auditor, proof-referee{{#if modules.readers}},
+   cold-reader, expositor, provenance{{/if}}{{#if modules.questions}}, tie-auditor{{/if}}{{#if modules.firsthand}}, lit-search{{/if}}) cannot run git. A re-check brief gives line ranges in the
+   file and pastes any diff to check.
+7. **After a fix that changes a claim or framing phrase**, run
+   `bin/stale-status-scan --phrase "<old phrase>" <file> [source files…]` before
+   re-dispatching. Include files that implement the claim. Read the `~~` bucket too: a
+   stale claim can survive inside the correction that supersedes it. It is a phrase grep;
+   it misses a reworded restatement.
+8. **A referee says "drop this undefined term"**: first ask whether the term restricts the
+   claim's domain. If dropping it would widen the claim, define it instead.
+9. **Two gates, or a gate and the author, disagree on a fact** (not wording): do not
+   average them or defer to one. First, one exchange: dispatch the dissenting gate again,
+   fresh, on the same text, with the other side's *argument* in the brief as evidence (not
+   its verdict word){{#if modules.commit_gate}}, stamped `--kind exchange`{{/if}}. If they still disagree, write both
+   positions in the staging file under `## Disagreements`, each classified (a fact, a
+   definition, the scope, whether a gap is minor).
+{{#if harness.is_claude}}
+   Then dispatch an **adjudicator**: the general agent (no agent file), told it reads and
+   computes but edits nothing. Its brief: the text, the two positions as "Argument A" (the
+   earlier) and "Argument B", with no gate names and no verdict words, and the question
+   "which is right, and what checkable step shows it?" It must run or write out that step (a
+   computation, a small case worked by hand, a quoted definition) and return the step and its
+   result; a ruling with no such step is unresolved. Then dispatch the gate it ruled against
+   again, fresh, with the step and its result as new evidence: not the adjudicator's argument
+   or its ruling, which a reviewer tends to concede to whether right or wrong. If that gate
+   now agrees, the disagreement is settled: record the step under `## Disagreements`.
+   Otherwise, or if the adjudicator gave no step,
+{{else}}
+   Then
+{{/if}}
+   keep the claim at the strength both sides accept, and put the question to {{owner}} under
+   "Needs your decision" in your next report.
+   Keep a minority verdict in the file; never overwrite it. Record {{owner}}'s answer in the
+   file it changes: `owner-decision: <date> <their words>`{{#if modules.conjectures}} (separate from `owner-override:`,
+   which records only a promotion on argued evidence){{/if}}.
+10. **Never write a verdict label** ("auditor clean", "red-team survived") into durable
+    text until that reviewer has re-run on the revised text and returned it. "Fixes
+    applied" is fine.
+11. **If your harness lets you choose a model per dispatch**, run at least one gate on a
+    proof-bearing document or a promotion on a different strong model: a model catches
+    another model's errors better than its own. It must still be a strong-tier model. If
+    your harness does not let you choose, skip this rule.
+12. **Do not tell a reviewer who wrote or proposed the claim**, {{owner}} included: give the
+    claim and its evidence. A name lends a claim authority it has not earned, and a reviewer
+    who knows the claim is {{owner}}'s defers to it. The rest of what to withhold: "The
+    brief", above.
+13. **When the red-team returns REFUTED or NARROWED**, record the breaking case where the
+    next claim will meet it:{{#if modules.questions}} a line under `Breakers:` in the `## Examples` of each question
+    the claim serves (`- <example> — broke <claim id> (<date>)`){{else}} in the claim's own file{{/if}}{{#if modules.attempts}}; and in the attempt ledger,
+    `bin/attempts refute <id> --statement "<what was disproved>"` for the line that relied on
+    the claim (or `bin/attempts log` when the line itself survives){{/if}}.
+14. **A miss: a claim that passed a gate is later refuted, narrowed or retracted.** In the
+    claim's file, write one line per gate that passed it{{#if modules.commit_gate}} (`bin/gate-stamp --list <path>`
+    names them){{/if}}: `review-miss: <gate> passed <claim> on <date>; it saw: "<the sentence it
+    passed>"; missed: <what>`. Tell {{owner}} in the same report, in one line.{{#if modules.attempts}} Also
+    `bin/attempts log` the miss on the attempt that relied on the claim.{{/if}}
+
+## Promotion is two steps, in order, and {{owner}} promotes
+
+1. `claim-auditor` returns `SOUND` on the drafted new wording. Iterate, up to the
+   re-review limit; this is your job to finish before anyone sees the proposal. At the limit
+   without `SOUND`, there is no proposal.
+2. `red-team` returns `SURVIVED` on the cheapest falsifier.
+{{#if modules.conjectures}}
+3. For `proved`: the last look (above) returns `SOUND`.
+{{/if}}
+
+{{#if modules.conjectures}}
+(The full list of who sets each status and which reviews it needs is the status-authority
+table in `docs/discipline/conjecture-ledger.md`. This section covers the two-step
+promotion to `supported` and `scope-tight`.)
+{{/if}}
+
+Only then **propose** the status change to {{owner}}, with the review summary: {{#if modules.commit_gate}}the output
+of `bin/gate-stamp --list <path>`{{else}}one line per gate that ran, with its verdict{{/if}}, the document's own status and gaps
+lines, and its `## Disagreements` section if it has one. You reach a proposable state on your
+own; {{owner}} makes the change.
+{{#if modules.commit_gate}}
+
+## Stamping a verdict
+
+After each gate returns, run `bin/gate-stamp <gate> <path> <VERDICT> -` with its full
+reply, word for word, on standard input (a here-document), **whatever the verdict**:
+a failing one is the review history. The stamp keeps that text, so do not save it to a file.
+A passing stamp is refused when the reply holds a caveat phrase ("sketched", "not
+verified"); if the line does not apply, pass `--caveat-ok "<the line, word for word> — <why>"`.
+The pre-commit check refuses a finding-bearing commit whose staged file has no passing stamp
+for its current content. Details: `docs/discipline/commit-gate.md`.
+{{/if}}

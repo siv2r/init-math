@@ -1,0 +1,14 @@
+{
+  "cwd": "/tmp/proj",
+  "hook_event_name": "PreToolUse",
+  "model": "gpt-6-luna",
+  "permission_mode": "bypassPermissions",
+  "session_id": "01a11c57-ef7b-7982-9ae3-07407d96fbcb",
+  "tool_input": {
+    "command": "*** Begin Patch\n*** Add File: notes/y.md\n+hello\n*** End Patch"
+  },
+  "tool_name": "apply_patch",
+  "tool_use_id": "exec-064091c0-d41e-410d-a561-93052ff22480",
+  "transcript_path": "/home/user/.codex/sessions/2026/10/08/rollout-2026-10-08T11-28-07-01a11c57-ef7b-7982-9ae3-07407d96fbcb.jsonl",
+  "turn_id": "01a11c57-f016-7640-8acc-8ca3033ea262"
+}

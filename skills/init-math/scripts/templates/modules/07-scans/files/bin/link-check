@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""link-check: find relative markdown links and conjecture/question wikilinks that point nowhere.
+
+Checks every relative link target (inline links and images) and every wikilink of the form
+[[C001-slug]] or [[Q001-slug]] (with an optional |label). Web links, mail links and pure
+#anchors are skipped, as are fenced code and inline code. Other [[wikilinks]] are counted
+but not checked. Run it before committing a document with cross-references.
+See docs/discipline/scans.md.
+
+Exit 1 if any reference is broken, else 0.
+
+selftest: yes
+usage: bin/link-check [file ...]   (no files: every .md in the project except logs/ and .git/)
+       bin/link-check --selftest
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+from urllib.parse import unquote
+
+ROOT = Path(__file__).resolve().parents[1]
+LINK = re.compile(r"!?\[(?:[^\]\n]|\][^(\n])*?\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+WIKI = re.compile(r"\[\[([^\]|\n]+)(?:\|[^\]\n]*)?\]\]")
+ID_SLUG = re.compile(r"^([CQ])(\d{3})(?:-[\w.-]+)?$")
+INLINE_CODE = re.compile(r"`[^`\n]*`")
+FENCE = re.compile(r"^\s*(```|~~~)")
+SKIP_DIRS = {".git", "logs", "node_modules", ".venv", "__pycache__"}
+def configured_dirs(root: Path) -> dict[str, str]:
+    """[questions] dir and [conjectures] dir from project.toml, else the defaults."""
+    try:
+        cfg = tomllib.loads((root / "project.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        cfg = {}
+    return {"questions": str(cfg.get("questions", {}).get("dir", "wiki/questions")),
+            "conjectures": str(cfg.get("conjectures", {}).get("dir", "wiki/conjectures"))}
+
+
+def stores(root: Path) -> dict[str, str]:
+    dirs = configured_dirs(root)
+    return {"C": dirs["conjectures"], "Q": dirs["questions"]}
+
+
+def all_md(root: Path) -> list[Path]:
+    out = []
+    for p in root.rglob("*.md"):
+        if not any(part in SKIP_DIRS for part in p.relative_to(root).parts):
+            out.append(p)
+    return sorted(out)
+
+
+def check_file(path: Path, root: Path) -> tuple[list[tuple[int, str, str]], int]:
+    broken, soft, fence = [], 0, False
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as e:
+        return [(0, str(path), f"cannot read: {e}")], 0
+    for i, raw in enumerate(lines, 1):
+        if FENCE.match(raw):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        line = INLINE_CODE.sub(" ", raw)
+        for m in LINK.finditer(line):
+            target = m.group(1)
+            if re.match(r"^[a-zA-Z][\w+.-]*:", target) or target.startswith("#"):
+                continue
+            t = unquote(target.split("#", 1)[0].split("?", 1)[0])
+            if not t:
+                continue
+            dest = (root / t.lstrip("/")) if t.startswith("/") else (path.parent / t)
+            if not dest.exists():
+                broken.append((i, target, "target does not exist"))
+        for m in WIKI.finditer(line):
+            name = m.group(1).strip()
+            idm = ID_SLUG.match(name)
+            if not idm:
+                soft += 1
+                continue
+            store = root / stores(root)[idm.group(1)]
+            if (store / f"{name}.md").exists():
+                continue
+            ident = idm.group(1) + idm.group(2)
+            cands = sorted(p.stem for p in store.glob(f"{ident}-*.md")) if store.is_dir() else []
+            hint = f"did you mean [[{cands[0]}]]?" if cands else f"no {ident} file in {stores(root)[idm.group(1)]}/"
+            broken.append((i, f"[[{name}]]", hint))
+    return broken, soft
+
+
+def run(files: list[Path], root: Path, quiet: bool = False) -> int:
+    n_broken = n_soft = 0
+    for f in files:
+        broken, soft = check_file(f, root)
+        n_soft += soft
+        for ln, target, why in broken:
+            n_broken += 1
+            try:
+                rel = f.resolve().relative_to(root.resolve())
+            except ValueError:
+                rel = f
+            print(f"{rel}:{ln}: broken reference {target} — {why}")
+    if not quiet:
+        print(f"link-check: {len(files)} file(s), {n_broken} broken, {n_soft} other wikilink(s) not checked.")
+    return 1 if n_broken else 0
+
+
+def selftest() -> int:
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "wiki" / "conjectures").mkdir(parents=True)
+        (root / "wiki" / "conjectures" / "C001-bound.md").write_text("# C001\n")
+        (root / "docs").mkdir()
+        (root / "docs" / "a.md").write_text("x\n")
+        good = root / "good.md"
+        good.write_text("See [a](docs/a.md#top), [web](https://example.org), [[C001-bound|C001]], "
+                        "[[some concept]].\n```\n[x](nowhere.md)\n```\n`[y](nowhere.md)`\n")
+        bad = root / "bad.md"
+        bad.write_text("See [b](docs/b.md) and [[C001-bond]] and [[Q002-x]].\n")
+        if run([good], root, quiet=True) != 0:
+            print("selftest FAIL: good file reported broken")
+            return 1
+        broken, _ = check_file(bad, root)
+        if len(broken) != 3 or "C001-bound" not in broken[1][2]:
+            print(f"selftest FAIL: {broken}")
+            return 1
+        # [[Cxxx]] resolves against [conjectures] dir from project.toml
+        (root / "project.toml").write_text('[conjectures]\ndir = "notes/conj"\n')
+        (root / "notes" / "conj").mkdir(parents=True)
+        (root / "notes" / "conj" / "C002-moved.md").write_text("# C002\n")
+        moved = root / "moved.md"
+        moved.write_text("See [[C002-moved]].\n")
+        if check_file(moved, root)[0]:
+            print("selftest FAIL: configured conjectures dir not used")
+            return 1
+    print("link-check selftest: ok")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("files", nargs="*")
+    ap.add_argument("--selftest", action="store_true")
+    a = ap.parse_args(argv)
+    if a.selftest:
+        return selftest()
+    files = [Path(f) for f in a.files] or all_md(ROOT)
+    return run(files, ROOT)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,88 @@
+# The literature wiki
+
+Open this when you add a source, write or update an article, or look something up in the
+literature. The wiki starts at [wiki/_index.md](../../wiki/_index.md); terms are in
+[GLOSSARY.md](../../GLOSSARY.md).
+
+## Why a wiki
+
+Papers read in one session are forgotten by the next unless what mattered is written down
+where the next reader will find it. The wiki separates three things that get muddled
+otherwise: what a source says (`raw/`), what we make of it (`concepts/`, `references/`),
+and what we still have to read (`inbox/`).
+
+## Rules
+
+**Read the index before scanning.** Every folder has an `_index.md` listing its files.
+Start from `wiki/_index.md`, then the folder's index; open individual files only once the
+index points you there. When you add a file, add its row to the folder's index in the same
+change.
+*Why:* scanning a folder file by file is slow and misses context the index gives; an index
+that is not kept current is worse than none.
+*Anti-scope:* a text search across the wiki for an exact term is fine and often faster.
+
+**Raw is immutable.** A file in `wiki/raw/` records a source as ingested and is never
+edited afterwards. If the extraction was bad, ingest it again as a new file and say so in
+the log.
+*Why:* when an article and its source disagree, the source has to be the fixed point;
+otherwise errors drift into both.
+*Anti-scope:* binaries and sources that cannot be committed (license, size) get a pointer
+file in `raw/` instead of a copy, with `kind: pointer`, a `pointer-reason:`, and short
+quotes of every statement the project uses from it. A copy for reading may sit in
+`wiki/raw/local/`, which git ignores; the pointer and its quotes stay the record.
+
+**Ingest a source the moment it enters the project, and synthesize it before working off
+it.** Follow the `ingest` skill: the raw record, then what you take from the source in an
+article in `concepts/` (the statement with its hypotheses, the idea of the proof or method,
+and how it connects to what the project already has){{#if modules.known_results}}, then its results about our objects
+in `known-results/`{{/if}}. A `references/` page may list and compare sources, but it does not
+replace the article. `bin/wiki-check` lists raw files nothing synthesizes.
+*Why:* writing the synthesis is where a misread hypothesis or a scope mismatch shows up,
+before it costs an experiment. The article is also what the next session reads instead of
+the paper; a source left as a link (in `raw/` or in a notes file) is read again by every
+session that needs it, or not at all.
+*Anti-scope:* looking up a single value or definition does not need an article; cite the
+raw file. Nor does a source used for one stated result: the raw record quoting that result
+with its hypotheses and page{{#if modules.known_results}}, plus its entry in `known-results/`, is enough{{else}} is enough, with the file named in `.wikiignore` ("one result, quoted"){{/if}}.
+Write the article once the project uses the source's method or a second of its results.
+
+**Articles are synthesized, not copied.** An article explains an idea in the project's
+terms, draws on one or more sources, and says how confident it is, with the reason on the
+same line (`confidence: medium — one preprint, not refereed; the key lemma's proof is a
+sketch`; the word is `high`, `medium` or `low`, from the quality of the sources). It lists
+its raw sources under `## Sources`.
+*Why:* a pasted abstract adds nothing the raw file did not have; a grade without its reason
+reads later as a verdict on the mathematics, and nobody can check it.
+*Anti-scope:* a short verbatim quote of a theorem statement is fine, marked as a quote.
+
+**Link both ways, with ordinary links.** Cross-references between wiki pages are ordinary
+relative markdown links, such as `[Literature wiki](literature-wiki.md)`. When page A links
+page B under `## See also`, B links A back.
+*Why:* agents, code hosts and the link checker follow markdown links; the link back lets a
+reader arriving at B find what builds on it.
+*Anti-scope:* the conjecture and question links `[[C001-slug]]` and `[[Q001-slug]]` keep
+their own form.
+
+**Log every operation.** Append one entry to `wiki/log.md` per ingest, synthesis, or
+reorganization: `## [YYYY-MM-DD] operation | description`. Never edit an existing entry.
+*Why:* the log answers "when did we learn this, and from what?" after the fact.
+*Anti-scope:* reading the wiki without changing it is not an operation.
+
+**Say when the wiki has no answer.** If the wiki does not cover a question, say so and name
+what should be read, rather than answering from memory as if it came from a source. Add the
+source to the inbox.
+{{#if modules.firsthand}}
+For an external search, use the `lit-search` agent; its theorem attributions are readings
+to check against the source before they enter the wiki.
+{{/if}}
+*Why:* an answer that looks sourced but is not is the hardest error to find later.
+*Anti-scope:* standard background (textbook material) can be stated without a wiki source,
+but name a textbook or standard reference where it can be found (a book and section). A
+result you cannot place in one is not background.
+
+**Work the inbox one item at a time.** An inbox item is one source, with why it is there.
+Ingest it to `raw/`, synthesize it, {{#if modules.known_results}}file its results about
+objects we study in `wiki/known-results/`, {{/if}}log it, and delete the inbox note. Never delete the raw copy.
+*Why:* an inbox that only grows becomes a reading list nobody reads.
+*Anti-scope:* an inbox note can be deleted without ingesting it if it turns out not to bear on
+the project; log that decision.

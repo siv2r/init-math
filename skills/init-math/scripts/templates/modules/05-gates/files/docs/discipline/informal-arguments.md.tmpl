@@ -1,0 +1,142 @@
+# Informal arguments
+
+Open this before you use an argument that convinces but is not a proof: a heuristic, a
+"morally" story, a plausibility count, an argument inside an idealized model, an analogy.
+Such an argument makes an **argued claim**: evidence, never a result. Write it with
+[docs/templates/informal-argument.md](../templates/informal-argument.md).
+
+*When:* before the argument is used to choose an approach{{#if modules.attempts}} (the `attack` skill points
+here){{/if}}, to support a {{#if modules.conjectures}}conjecture (its evidence entry's `argued:` line names the
+argument file){{else}}claim{{/if}}, in a write-up, or {{#if modules.tiers}}in a worker's `ARGUED` return{{else}}in a report{{/if}}.
+
+## Write it as checkable parts
+
+**Rule.** Write the argument as:
+
+1. numbered sub-claims, each a statement that could be false;
+2. its starting points, and whose they are: "standard", "expert belief (whose)", "our
+   computation";
+3. its **handle**: the step that does the work, separated from ancillary detail, so it is
+   clear what each input is used for;
+4. where it is known to be false, and why that may not matter.
+
+Each sub-claim can then be attacked, formalized or searched for a counterexample on its own.
+Record your credence in the conclusion when you write it down, before any check, and again
+after, on five words (very unlikely, unlikely, even, likely, very likely): once the checks
+are in, what you believed before is rewritten to match them. Words, not numbers: a model's
+stated percentages are poorly calibrated, but a move between words still shows a change of
+mind.
+**Why:** a fluent narrative hides its weakest step; the unstated premises of an argument are
+where it fails. "By a standard argument" and "morally" are black boxes until filled.
+**Example (number theory):** the Hardy–Littlewood count of twin primes, written as parts:
+S1, primes are "independent" modulo each small prime (a model, not a theorem); S2, the local
+densities multiply; S3, the count up to x is the product of the local factors times
+x/(log x)². The handle is the product of local correction factors. Known false nearby:
+Cramér's simpler model, which ignores divisibility by small primes, gives the wrong count of
+primes in intervals of length (log x)^λ (Maier, Michigan Math. J. 32, 1985); S1 is the
+correction for small primes, and the leading term matches computation to very large x.
+**Anti-scope:** a one-line plausibility remark used only to choose what to compute next
+needs no template.
+
+## Perturb, do not reread{{#if modules.attempts}} (principle: perturb-not-reread){{/if}}
+
+**Rule.** First write what result would count as support; if both outcomes would fit, the
+check is not evidence. Then choose **at least two** of these, each with a reason tied to the
+handle:
+
+- **drop a hypothesis:** does the argument still "work"? Then it proves too much, unless
+  you show the hypothesis affects only lower-order terms or the error term and the argument
+  claims only the leading term (a heuristic for a main term may rightly ignore a condition
+  that matters only for the error);
+- **the false variant:** would the same story equally "explain" a false neighbour (another
+  exponent, a dropped condition)? Then it is unconstrained;
+- **corrupt a step:** break one step; if the conclusion and your confidence do not move,
+  the step was decoration;
+- **delete an ingredient:** does the support survive without it?
+- **a nearby case** the argument has not seen: does it predict it?
+- **the distinguishing feature:** does the method see what separates this problem from a
+  similar one with the opposite answer?
+
+Each result cites what was run or reasoned, or says `not run`. **When one bites,** the
+argument does not support the claim as stated: say so, and narrow the claim to what survives
+unless you can say why the perturbation does not apply. Passing the perturbations does not
+prove the mechanism; failing one locates the problem.
+**Why:** a reread follows the author's path and finds it plausible; a perturbation asks
+whether the argument depends on what it says it depends on. For language models in
+particular, corrupting a step of a chain of reasoning often leaves the answer unchanged.
+**Example:** an argument for Fermat's last theorem that never uses the exponent being at
+least 3 would also "prove" that x² + y² = z² has no solutions, which is false: dropping the
+hypothesis shows the argument is broken before anyone finds the faulty step.
+**Anti-scope:** a routine computational step needs a check, not perturbations.
+
+## Explanation: "would explain if true" is not "probably true"
+
+**Rule.** An argument offered as an explanation gets two judgments, kept apart: *would it
+explain much if it were true*, and *is it probably true*. Test the first by compression (the
+shortest description of what the argument does should name only the load-bearing tools) and
+by a nearby case it should predict; test the second by evidence. Say also whether it claims
+"why it must be so" or only "how it could be so".
+**Why:** a satisfying story raises confidence without raising the evidence; "I see why it is
+true" generates a hypothesis, it does not verify one.
+**Example:** the heuristic that the primes are "random" explains the shape of many
+conjectured counts and is often right, yet Cramér's version of it fails in short intervals
+(Maier, 1985): lovely, and only sometimes likely.
+
+## Objections and repairs
+
+**Rule.** Record an objection as a *rebuttal* (a counterexample to the conclusion) or an
+*undercut* (a reason the support fails, such as numerical evidence drawn from a biased
+range). After a counterexample, record the repair by its kind:
+- *monster-barring*: narrowing a definition so the counterexample no longer counts;
+- *exception*: listing it as an exception;
+- *lemma-incorporation*: adding the hidden hypothesis the counterexample exposed to the
+  statement.
+
+Say what content the repaired statement has left{{#if modules.conjectures}}, on the evidence entry's `repair:` line{{/if}}.
+**Why:** silent narrowing can shrink a statement until it is empty, and nobody notices,
+because each step looked like a clarification.
+**Example:** Lakatos's account of Euler's formula V − E + F = 2: a picture-frame polyhedron
+breaks it; declaring it "not a polyhedron" is monster-barring, while adding "simply
+connected" to the statement is lemma-incorporation, and only the second says what was
+learned.
+
+## Arguments inside a model
+
+**Rule.** An argument proved only inside an idealized model (a random oracle, a generic or
+algebraic group, a random model of the primes, perfect commitments) is labelled
+`model-only (<model>)` and says `ignores: <what the idealization ignores that a real proof
+must handle>`. It is cleared only by an argument outside the model. Collect the known attacks
+and impossibility results, and for each step say which one it must rule out; isolate a
+combinatorial core as a named problem and study it alone. (This last procedure is a prompt
+drawn from one documented episode and one practitioner's account, not a rule.)
+{{#if modules.attempts}}
+The move `impossibility-as-assumptions` (`docs/discipline/moves.md`) is the same idea used to
+build: read each impossibility result as the list of assumptions a construction must break.
+{{/if}}
+**Why:** the idealization usually bypasses exactly the difficulty a real proof must face.
+**Example:** published security proofs for two-round multi-signature schemes (MuSig, BCJ,
+MWLD) looked sound; Drijvers et al. (IEEE S&P 2019) then showed that no algebraic reduction
+could prove such schemes secure under the discrete-logarithm assumptions, located the flaws
+in the published proofs, and gave sub-exponential attacks.
+**Weight:** heavier when `[field_profile] construction = true`.
+
+## Labels
+
+An argued claim says what kind of support it has. Labels combine with `+`
+(`heuristic + model-only (ROM)`).
+
+- `heuristic`: a random model, a plausibility count, a density argument.
+- `moral`: a simplification known to be not quite true ("morally, the error term is
+  smaller").
+- `conditional`: on a named open premise (a result assuming the generalized Riemann
+  hypothesis).
+- `model-only (<model>)`: proved only inside an idealized model; write also
+  `ignores: <what the idealization ignores that a real proof must handle>`. Example: a
+  random-oracle proof is evidence, not a guarantee: there are schemes secure in the
+  random-oracle model and broken with any real hash function (Canetti, Goldreich, Halevi).
+- `analogy (hint)`: an analogy that suggested the idea; `analogy (relay: <what transfers>)`:
+  one that carries a result across, saying what makes it transfer (the function-field
+  analogue of a number-field statement, with the dictionary that transfers it).
+
+This project's own labels are listed in `project.toml`, `[arguments] labels`; add one there
+when a kind of argument recurs in your field.

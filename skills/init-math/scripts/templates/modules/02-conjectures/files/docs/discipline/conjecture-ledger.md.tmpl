@@ -1,0 +1,250 @@
+# The conjecture ledger
+
+Open this when you state a new conjecture, record evidence, change a conjecture's status, or
+decide what to work on next. The ledger lives in
+[wiki/conjectures/](../../wiki/conjectures/_index.md); terms are in
+[GLOSSARY.md](../../GLOSSARY.md). How a conjecture links a research question:
+[question-ties.md](question-ties.md).
+
+## Why a ledger
+
+Experiments produce evidence; the ledger is where evidence changes what we believe. Without
+it, a result lives in one session's notes, a refuted idea gets tested again a month later,
+and nobody can say which claims are safe to build on. One file per conjecture, with a
+status, the questions it serves, dated evidence, and its next steps.
+
+## Stating a conjecture
+
+**State it as a connection between properties, on a named family.** The most useful
+conjectures say that two properties of the same objects go together ("for the objects in
+F, property A holds exactly when property B does"), or that one controls the other. Name
+the family the statement is about in `family:`: a parameter range, a class of objects, a
+named sequence.
+*Why:* a connection explains, and one counterexample to it is informative; a single-property
+observation ("this case has property A") explains nothing by itself. Naming the family keeps
+the claim honest about what the evidence covers: a result checked on one family is a
+conjecture about the others.
+*Anti-scope:* a single-property statement is fine when the research question itself asks
+for exactly that property (an exact value, a bound). Do not invent a second property to fit
+the shape. These are not the only exceptions: if you think a conjecture is better stated
+another way, say so to {{owner}} in plain mathematical terms (the statement you would file,
+and why the connection form fits it badly), and file it as {{owner}} decides.
+
+The rows below illustrate the shape; they are not claims about the mathematics.
+
+| Weak | Better |
+|---|---|
+| Partition numbers in these progressions are often divisible by l. | For primes 5 <= l <= 31, p(l n + b) = 0 mod l for all n only when 24 b = 1 mod l. |
+| Large cap sets look like products. | For n <= 8, every cap set of maximum size in F_3^n is, up to affine maps, a product of maximum caps in lower dimensions. |
+| Many of these curves have rank 2. | In the family y^2 = x^3 + d with d cube-free and d < 10^4, rank >= 2 exactly when the root number is +1 and a small explicit point exists. |
+
+**Every conjecture serves at least one question, with a stated tie.** `questions: [..]` lists
+them; `question-tie:` says, in one sentence, what a verdict here would change in that
+question's answer. If no question fits, propose one (the `new-question` skill) rather than
+stretching a tie.
+*Why:* this is how effort stays on the questions the owner chose. `bin/question-check`
+fails a conjecture with no question or no tie.
+*Anti-scope:* the tie is a consequence for the answer, not a statement that the topics
+overlap (see question-ties.md).
+{{#if modules.known_results}}
+
+**Check the known results before testing.** Look in
+[wiki/known-results/](../../wiki/known-results/_index.md): if a published result already
+settles the conjecture, mark it `proved` with the citation instead of spending compute; if
+one suggests it, cite that as its origin.
+*Why:* re-deriving a known theorem costs a session and can end up claimed as new.
+*Anti-scope:* a known result on a different family settles nothing here; it is a reason to
+expect an answer, not evidence.
+{{/if}}
+
+**Write down the reading.** Under `## Reading`, list the other plausible readings of the
+statement and its conventions, then the intended one and why. A result that holds only for a
+weaker reading says so in its evidence entry; it does not count for the intended one.
+*Why:* under ambiguity, the easiest reading gets solved and the hard one is left untouched
+while looking settled.
+*Anti-scope:* a statement with one obvious reading needs one line saying so.
+
+## Status
+
+| status | meaning |
+|---|---|
+| `open` | stated, no evidence yet |
+| `testing` | a check is gathering evidence now |
+| `weakly-supported` | passed a narrow check only (one sub-family, a small range, one mechanism) |
+| `supported` | survived a broad check across the relevant variety of cases; not proved |
+| `scope-tight` | holds within its stated scope; widening the scope is known to break it |
+| `refuted` | a counterexample was found and recorded |
+| `proved` | settled by a proof, ours or cited |
+
+**Calibrate: a clean pass on a narrow check is `weakly-supported`, not `supported`.** Count
+the independent mechanisms and sub-families the evidence covers, not the number of cases,
+and write down what the check did NOT cover.
+*Why:* ten thousand cases from one sub-family test one mechanism once; building on that as
+if it were settled is how a project ends up with a stack of results resting on a guess.
+*Anti-scope:* `supported` does not need a proof or every case; it needs coverage across
+the variety the statement claims.
+
+**Keep "worth pursuing" apart from "believed true".** Beside its status, a conjecture
+carries `credence:` (very unlikely, unlikely, even, likely or very likely: the five words an
+argument's credence uses; never certain) and `pursuit:` (why it is worth effort now), each with a date and a reason that cites mathematical evidence.
+{{owner}} sets both. An agent may write its proposal into the field, with its reason, ending
+`(proposed by an agent, <date>)`; {{owner}} confirms or changes it, which removes the mark.
+A marked value is a suggestion, never {{owner}}'s judgment.
+*Why:* a conjecture can be worth pursuing while unlikely (a cheap test would settle a lot),
+or likely and not worth the effort; one field cannot say both. Words, not numbers,
+because finer numbers are noise and a model's stated confidence runs high.
+*Anti-scope:* not a status: nothing gates on it, and it never replaces the evidence.
+
+### Who sets a status, and what must exist before the commit (status authority)
+
+This table is the one place the rule is stated. The gate-chain skill{{#if modules.commit_gate}}, `docs/discipline/commit-gate.md` and the `[gates]` policy in `project.toml`{{/if}} point here instead of restating it.
+
+| status | who sets it | required before the commit |
+|---|---|---|
+| `open`, `testing` | anyone | nothing |
+| `weakly-supported`, `refuted` | the agent | `claim-auditor` green; for `refuted`, the counterexample confirmed a second way, on a `confirmed-by:` line |
+| `supported`, `scope-tight` | the agent proposes after `claim-auditor` green and `red-team` survives; {{owner}} says yes in conversation; the agent then commits | `claim-auditor` and `red-team` stamps |
+| `proved` (our own proof) | as `supported` | `proof-referee`, `claim-auditor` and `red-team`, then the `claim-auditor`'s last look |
+| `proved` (settled by a cited proof) | the agent, after reading the cited theorem itself; it tells {{owner}} in its next reply, naming the theorem and the source | `claim-auditor` only; the file carries a `settled-by:` line naming the source{{#if modules.known_results}} (a [known-results](../../wiki/known-results/_index.md) file){{/if}} |
+
+*Why:* a status is what other work builds on, so the stronger the status, the more
+independent looks it gets. A citation-proved flip has no new proof to referee and no claim
+to attack, so it needs only the check that the conclusion matches the cited theorem.
+*Anti-scope:* `open` <-> `testing` and new `@residue` lines are bookkeeping, not findings.
+A `settled-by:` line is for a result that really is cited; a proof of our own never uses it.
+{{#if modules.commit_gate}}
+The commit gate enforces the right-hand column: the `proved` rules in `project.toml` read the
+`settled-by:` line, and a flip to `supported` or `proved` without the stamps is refused.
+{{/if}}
+
+**A status change to `weakly-supported`, `supported`, `scope-tight`, `proved` or `refuted`
+records a finding.** Write the evidence entry first, then follow the `gate-chain` skill
+before committing the change.
+*Why:* a status is what other work builds on; the reviewers catch a conclusion that does
+not follow from the evidence before it spreads.
+*Anti-scope:* `open` <-> `testing` and new `@residue` lines are bookkeeping, not findings.
+
+**A refuted conjecture is kept.** Record the counterexample in its evidence, confirm it a
+second way (another program or method, or by hand{{#if modules.experiments}}; the recompute rule in
+[experiment-doctrine.md](experiment-doctrine.md){{/if}}) and say how on a line
+`confirmed-by: <how>` in that entry, set `status: refuted`, and leave the file and its row
+in place. `bin/question-check` warns on a refuted conjecture with no `confirmed-by:` line. Never delete a conjecture.
+{{#if modules.gates}}If a reviewer had passed it at a higher status, or a narrowing undoes a status it passed,
+add a `review-miss:` line for each such gate (the `gate-chain` skill, rule 14).
+{{/if}}*Why:* ruling a conjecture out is a result. Deleting it invites someone to test it again,
+and the counterexample often suggests the corrected statement. A refutation closes a line of
+work without {{owner}}'s yes, so the likeliest failure, a bug in the program that found the
+counterexample, is checked first.
+*Anti-scope:* a duplicate of another entry (same statement, same family) may be merged into
+it, leaving a one-line pointer in its place.
+
+**Evidence entries are dated and reproducible.** Each says what was checked, on which cases,
+with which tool and command, and the verdict.
+*Why:* a verdict nobody can rerun cannot be trusted or extended to the next range.
+*Anti-scope:* a line of reasoning with no computation is evidence too; date it and say
+what it assumes. If it is an informal argument, it is an argued claim (next rule).
+
+**An argued claim is evidence, never a result.**{{#if modules.attempts}} (principle: argued-not-result){{/if}} An argument that convinces but
+is not a proof (a heuristic, a "morally" step, a model-only or conditional argument, an
+analogy) enters as an evidence entry with an `argued:` line naming its labels and its
+argument file (`docs/templates/informal-argument.md`, filled in the work folder). It never
+enters a status line, a known result{{#if modules.readers}} or a write-up's claims{{/if}} without its label.
+- **The cap:** an agent does not propose or commit a status above `weakly-supported` when
+  every evidence entry behind it is argued. {{owner}} can still decide it: the decision is
+  recorded in the file as `owner-override: <date> <the decision, in their words>`{{#if modules.commit_gate}}, and the
+  commit gate refuses the change without one{{/if}}.
+- **Conditional results:** a proof that rests on an open `@assumes:` line (below) proves the
+  conjecture only on that premise. Record it with `conditional-on: <the premise>`; `proved`
+  without that line, while such a line is open, is refused like the cap.
+*Why:* a heuristic stated as a result becomes a premise that others build on, and nobody
+remembers it was never proved; labelled, it stays useful and visible.
+*Anti-scope:* an argument the proof-referee accepts as a routine sketch inside a proof is
+part of that proof, not an argued claim.
+
+**Mark what builds on an argued claim.** A file that uses an argued claim or an open premise
+carries a line where it is used:
+`@assumes: <C<nnn> or the argument file's path> — <the claim, one line> — argued (<labels>)`
+(or `— open premise`). `bin/residues --assumes` lists them all, grouped, and the list never
+shrinks because a claim "has held up": a line goes only when its claim is proved, refuted,
+or no longer used.
+*Why:* "we have used this unproved step ten times and nothing broke" is how an assumption
+quietly becomes a fact.
+
+**Say how independent each check is.**{{#if modules.attempts}} (principle: independence-given-claim){{/if}} After `rivals:` and
+`differs-from-prior:` (next rule), an entry ends with:
+- `sign: necessary | fallible — <how natural the statement is>`: a reduction or a proved
+  special case is a necessary sign; agreement and patterns are fallible;
+- `checked: rerun | read | reported`: an agent's "verified" is `reported` (testimony) until
+  someone reruns or reads the check;
+- `shares: <what this check shares with earlier entries: an identity, a lemma, code, a prompt; or none>`;
+- for an argued claim, `argued: <labels> — <argument file>`;
+- after a counterexample, `repair: monster-barring | exception | lemma-incorporation — <the
+  content the statement has left>` (`docs/discipline/informal-arguments.md`, "Objections and
+  repairs"); a statement or family narrowed after a refuting or narrowing entry, with no
+  `repair:` line, is reported at commit.
+Two checks through the same identity, lemma, code path or prompt are one check.
+*Why:* independence is relative to the claim, not to who ran the check; two computations
+through one mistaken identity fail together.
+
+**Say what each check could have shown, against named rivals.**{{#if modules.attempts}} (principle: name-rivals){{/if}} An evidence entry ends with
+two lines: `rivals:` (the concrete rival statements the check tells apart from this one: a
+weaker form, a different range, the negation on a sub-family) and `differs-from-prior:`
+(yes or no: did the outcome differ from what was predicted before the check). A check that
+every reasonable rival also passes clears a hoop; record it as `rivals: none (a hoop)`, and
+it does not raise the status.
+*Why:* evidence supports a claim only against an alternative that would have failed it;
+weighing a claim against "not the claim" tells you nothing. A result that surprised you
+teaches more than one that confirmed what you expected.
+*Anti-scope:* a hoop is still worth recording: it rules out gross error.
+
+**When a status becomes `supported`, `scope-tight` or `proved`, frame the result before
+moving on.** Ask what it is known as: list candidate names for the structure or statement,
+search under them{{#if modules.firsthand}} (the literature search, `docs/discipline/firsthand-checks.md`){{/if}}, and place
+the result against the definitions and results it is closest to, in a few lines under its
+evidence; several framings are fine.{{#if modules.attempts}} Then read `bin/attempts --obstructions` for each
+question it serves: the new result may remove a recorded obstruction, and that line is
+revived (`bin/attempts revive <id> --because "<the result>"`).{{/if}}
+*Why:* a result named and placed connects to a literature and to the rest of the project; a
+result recorded bare is rediscovered later, or misses what it unlocks.
+*Anti-scope:* a few minutes, not a survey; a concept article is written only when the
+search found something.
+
+## Next steps and the backlog
+
+**Settled is not done.** A `supported`, `proved` or `scope-tight` status settles the core
+claim within its recorded scope. The conjecture usually still has next steps: a larger
+range, a second family, an exact form not yet pinned down, a mechanism not yet named. Write
+each one in the file as a line starting `@residue:`, cheapest first.
+*Why:* the list is sorted by status, so settled rows sink and their next steps look
+closed. These are often the cheapest, highest-yield work, because the conjecture has
+already earned its keep.
+*Anti-scope:* a residue is a stateable next step ("check n = 9"), not a wish ("understand
+this better"). A conjecture with nothing left to do simply has no residue lines.
+
+**The cheapest residue is a falsification attempt.**{{#if modules.attempts}} (principle: falsify-first){{/if}} The first next step on a conjecture is
+the cheapest way to break it (widen the range, look for a counterexample, try the boundary
+case). A proof attempt comes last, after the evidence and a named mechanism.
+*Why:* a counterexample found early saves the effort of a proof attempt on a false
+statement.
+*Anti-scope:* when the statement is already `supported` broadly and the mechanism is named,
+the proof can be the next residue. Where small cases say little about the statement
+(`small_cases_informative = false` in `[field_profile]` of project.toml, or
+`small-cases: not-informative` in the conjecture's frontmatter), the first step may be a
+proof attempt or a reduction, provided a cheap way to refute the statement (a special case,
+a known theorem it would contradict) is recorded beside it as a `@residue:` line.
+
+**Rebuild the backlog with `bin/residues`, never from the status column.** It lists every
+`@residue:` line across all statuses, the owner's `@priority` conjectures first, then in
+the allocation order of their questions. `bin/residues --eligible` keeps only conjectures
+that link an active question.
+*Why:* a reader who trusts the status column skips the settled rows, and with them most of
+the cheap work.
+*Anti-scope:* the list is a starting point, not an order to follow blindly; a residue may be
+blocked or no longer worth doing (say so in the file and remove the line).
+
+**`@priority` belongs to the owner.** Only {{owner}} decides a `@priority` line, which goes
+in with an `activated-by: {{owner}}` line; {{owner}} writes them or asks an agent in the
+conversation to. An agent that thinks something deserves priority says so in its report. `bin/question-check` fails a `@priority` with no `activated-by:` line, and
+`bin/residues` ignores it.
+*Why:* priority redirects the whole program; that call is the owner's.
+*Anti-scope:* anyone may add conjectures and `@residue` lines.

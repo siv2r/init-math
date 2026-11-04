@@ -1,0 +1,137 @@
+---
+name: program-review
+description: Program-level review — is the research actually going anywhere, measured against the owner's written goals? Drafts evidence-cited findings, asks the owner at most three goal questions, checks whether recent workflow changes were actually used, and records only what the owner accepts. Load it when the owner asks for a program review; offer it when a reminder says one is due or the owner changes the direction of the work. Never mid-task.
+---
+
+# Program review
+
+Not friction clustering (the `reflect` skill) and not a session retrospective: this asks
+whether the work, taken together, is moving toward what {{owner}} wants. Inside a session,
+everything looks like progress; this review exists to look from outside. Run it at a
+stopping point.
+
+## 1. Read before asking
+
+- `notes/program-goals.md` — {{owner}}'s goals, in their words, with dated answers from
+  earlier reviews. **Read it yourself.** If it looks empty, check it is really unfilled
+  (not just short) before reporting "no goals"; never re-ask a question it already answers.
+- `notes/program-reviews.md` — earlier reviews: what was accepted, what was to be
+  watched.
+- What happened since the last review (its date is the last `## YYYY-MM-DD` heading):
+  - `git log --since=<date> --stat --oneline` — where the effort went, by directory;
+{{#if modules.questions}}
+  - `wiki/questions/` — the research questions and their status;
+{{/if}}
+{{#if modules.conjectures}}
+  - `wiki/conjectures/` — status changes since the date (`git log --since=<date> -p -- wiki/conjectures/ | grep '^[-+]status:'`) and the open next steps (lines marked `@residue`);
+{{/if}}
+{{#if modules.experiments}}
+  - `experiments/_index.md` — experiments run, and any still waiting for analysis;
+{{/if}}
+  - `notes/workflow-journal.md` — `REFLECT` lines (workflow changes made){{#if modules.retro}} and `RETRO` lines{{/if}};
+  - `bin/journal --summary` — what kinds of friction and failure dominate (do not mark anything reviewed);
+  - review misses since the date: `git log --since=<date> -p | grep -E '^\+.*(author|review)-miss:'`
+    (a crux the author check missed; a claim a reviewer passed that later broke).
+
+## 2. Draft the findings
+
+Write 3–6 findings to a scratch file (not committed). Each finding is one or two
+sentences about the *program*, not about one task, and **cites its evidence**: a file and
+line, a commit, a log row. Useful angles:
+
+- **Effort vs goals:** does where the commits went match what the goals say matters?
+- **Movement:** which goals saw real change (a status flip, a result, a closed question),
+  and which saw none since the last review?
+- **Stalls and churn:** items reopened, rerun or rewritten repeatedly without a change in
+  status.
+- **Unwatched promises:** things the last review said to watch — what happened?
+- **Misses:** each `review-miss:` line, and any kind of miss seen twice (the same reviewer,
+  the same kind of step, the same author-check line left blank). Propose one change for it:
+  a line in a reviewer's instructions, a scan, a question in the author check. {{owner}}
+  decides, as with any finding.
+{{#if modules.questions}}
+- **Questions vs direction:** does each `active` question still match where the work
+  goes? An active question that got no work since the last review, or work going to
+  questions that are not active, is a finding. Propose for each such question whether it
+  stays active, becomes `parked` or is `answered` (and where the answer is recorded);
+  {{owner}} decides, and you edit the files only on their word. A work folder still
+  `active` in `work/_index.md` under a question that is not, or with no commit since the
+  last review, is a finding too.
+{{/if}}
+
+A finding you cannot cite is labelled **`[UNGROUNDED]`**, in those words, and stays
+labelled when you present it. No cheerleading, no softening: a review that only reports
+progress has not looked.
+{{#if harness.cap.subagents}}
+
+Before presenting, have the `claim-auditor` read the draft (give it the file path) and
+check that each finding follows from what it cites; fix or label what it flags. You wrote
+the work being reviewed, so a fresh reader catches what you will not.
+{{/if}}
+
+## 3. Present, then ask the goal questions
+
+Present the findings plainly, without file paths or config syntax unless {{owner}} asks
+for the evidence behind one. Then ask **at most three goal questions**, one at a time,
+conversationally — questions whose answers would change what gets worked on next ("Is
+closing X still the priority, or has Y overtaken it?"). Append each answer, dated and in
+{{owner}}'s words, to `notes/program-goals.md` under the date heading of this review.
+
+If the goals file has duplicates, contradictions or answers overtaken by later ones,
+propose a consolidation and edit it **with** {{owner}}, applying only what they accept. A
+goals file that only grows stops being usable.
+
+## 4. Adoption check: applied is not adopted
+
+List the workflow changes made since the last review (`REFLECT` journal lines,
+`git log --since=<date> --oneline --grep='reflect'`). For each, ask: was it actually
+used, or did it fire, since it landed? Evidence: `logs/nudges.jsonl` for a nudge, the git
+log for a template or skill. First check whether the situation the change answers came up
+since it landed. If it did not, the verdict is **no data yet**, not a reason to revert;
+offer a revert only when the situation came up and the change was not used, rather than
+let it accumulate.
+
+A change that only records **new** rows from now on cannot have moved a total over the
+whole history. If the rows behind a reading predate the change, the verdict is
+**no data yet**, not "did not help" — and not a reason to revert.
+{{#if modules.attempts}}
+
+**Principles.** The revert offer above is for workflow changes. For the registered
+principles (`docs/principles.toml`), run `bin/principle-usage` (its window starts at the
+last review) and go through its verdicts:
+
+1. **`trigger seen, unused`**: the situation came up and nobody recorded the principle.
+   Propose wiring it in at the next rung: a pointer where the agent reads at that moment,
+   then a nudge, then a check.
+2. **`never triggered`**: check that the trigger is right before proposing to retire the
+   principle. The first reviews show mostly this and `not measurable`; that is expected.
+3. **`considered, skipped`**: read the stated reasons; they may show the principle's
+   `defeater` is wrong or missing.
+4. **Spot-check three recorded uses** (`bin/principle-usage --sample 3`): did each produce
+   what it claims? A recorded use is what an agent wrote, not proof the rule was followed.
+
+Retiring a principle, switching one off (`on = false`), or changing its text is
+{{owner}}'s decision.
+{{/if}}
+
+## 5. Record what was accepted
+
+Offer to append a section to `notes/program-reviews.md`:
+
+```markdown
+## YYYY-MM-DD — program review
+
+Findings accepted:
+- <finding> (evidence: <citation>)
+
+Goal answers: see notes/program-goals.md, YYYY-MM-DD.
+Changes kept / reverted: <list>
+To watch before the next review: <list>
+```
+
+Only what {{owner}} accepts goes in; the draft is discarded. Write the section even when
+nothing was accepted (`Findings accepted: none`): the reminder counts from the last dated
+heading, so a review left unrecorded is offered again a week later. When {{owner}} declines
+an offer, append `## <date> — offer declined` to the file: the next offer then comes a full
+interval later, not every week. Carry out any reverts they
+chose, each as its own commit.

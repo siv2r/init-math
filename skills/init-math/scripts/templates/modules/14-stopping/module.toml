@@ -1,0 +1,12 @@
+id = "stopping"
+number = 14
+title = "When to stop, and how to resume"
+group = "D"
+status = "included"
+order = 140
+summary = "Keep going through specified steps; break hard work into bricks before calling it blocked; keep a resume point on disk."
+depends = []
+
+[[hooks]]
+script = "hooks/continue-nudge.py"
+event = "Stop"

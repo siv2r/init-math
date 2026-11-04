@@ -1,0 +1,85 @@
+# Hook authoring
+
+Hooks are the small Python scripts in `hooks/` that the harness runs when the agent acts
+(before a shell command, after it, at the end of a turn). They are registered in
+`{{harness.hook_config}}` and built on [`hooks/_payload.py`](../../hooks/_payload.py), which
+turns the harness's payload into one `Event` (see [`normalize`](../../hooks/_payload.py))
+and supplies the responses: [`nudge_once`](../../hooks/_payload.py),
+[`block`](../../hooks/_payload.py), [`stop_continue`](../../hooks/_payload.py) and
+[`log`](../../hooks/_payload.py). Enter through [`run`](../../hooks/_payload.py). Read this before you write a hook, change one, or vouch that one
+works — most often during a reflection pass ([reflection loop](reflection-loop.md)).
+
+## 1. Test the script the way the harness runs it — four branches
+
+**Rule:** a hook's selftest launches the script itself, with a realistic JSON payload on
+stdin and `CLAUDE_PROJECT_DIR` pointing at a temporary directory, and covers all four
+branches:
+
+1. **Allow** — an ordinary input passes silently (exit 0, nothing on stderr).
+2. **Trigger** — the input the hook exists for gets the intended response (exit 2 and an
+   actionable message; for a nudge, the first issue is refused and the identical re-issue
+   passes).
+3. **Bypass** — every documented way to switch it off works: `HOOKS_QUIET=1`, and any
+   hook-specific switch it advertises.
+4. **Failure** — malformed stdin, and a forced internal error (for example a broken
+   `project.toml`). The hook must exit 0, print a `WARNING` on stderr, and leave a
+   traceback in `logs/state/hook-errors.log`.
+
+Put it in `hooks/selftest/test_<hook_name>.py` (unittest); `bin/selftest` runs it. In the
+subprocess environment, set or remove `HOOKS_QUIET` explicitly. `bin/selftest` sets it.
+A test that inherits it never sees its trigger branch fire.
+
+*Why:* a hook does not run the way a unit test calls its functions — it gets JSON on stdin,
+the live environment and its exit code as the only signal — so a function-level test can
+pass while the real hook never fires, or its bypass silently does nothing.
+*Anti-scope:* a one-line change to a message string needs only a rerun of the existing
+selftest, not new cases.
+
+## 2. Fail open, never silently
+
+**Rule:** an internal error in a hook lets the action proceed (exit 0) **and** says so:
+a warning on stderr and the traceback appended to `logs/state/hook-errors.log`.
+`_payload.run(main, hook)` does both — always enter through it, and do not wrap the body
+in your own `try: … except: pass`.
+
+*Why:* a crashing hook that blocks wedges every session; a crashing hook that exits
+quietly looks like protection that is not there.
+*Anti-scope:* a hook may deliberately swallow an expected, harmless condition (a log file
+that does not exist yet) — that is not an error.
+
+## 3. Payloads differ between harnesses
+
+**Rule:** read the payload through `Event` fields (`ev.action`, `ev.command`, `ev.paths`)
+and `ev.raw` only for what `Event` does not carry; never branch on a harness's tool name.
+Every hook must work when `ev.transcript_path` is empty. When you depend on a field of
+`ev.raw`, test against a payload captured from the real harness, not one you imagined.
+
+*Why:* the same moment looks different per harness, and a guessed field silently never
+matches.
+{{#if harness.is_claude}}
+Example: in this harness the after-a-command payload carries no exit code; a failed
+command arrives as a separate `PostToolUseFailure` event.
+{{else}}
+Example: this harness's payload formats were not all verified when the project was set
+up; before relying on a field, capture one real payload (log `ev.raw` once) and test
+against it.
+{{/if}}
+*Anti-scope:* none; this is how every hook is written.
+
+## 4. Prefer a nudge to a block
+
+**Rule:** a new hook refuses at most once per distinct key (`nudge_once`) and its message
+says what was noticed, why it matters in one line, what to do instead, and that re-issuing
+proceeds, naming the discipline doc that explains more. A hard `block` needs a stated
+reason and a stated bypass, and is an ASK-class change in the reflection loop.
+
+*Why:* every refusal costs a turn; a nudge that can be dismissed costs little when it is
+wrong, a block that is wrong stops work.
+*Anti-scope:* a safety guard against irreversible damage may block outright.
+
+## Removing or silencing a hook
+
+Delete its entry from `{{harness.hook_config}}` (and the script and its selftest), run
+`bin/selftest`, and note the removal in `notes/workflow-journal.md` so the next reflection
+pass knows it was deliberate. To silence every nudge for one session, start the harness with
+`HOOKS_QUIET=1`.

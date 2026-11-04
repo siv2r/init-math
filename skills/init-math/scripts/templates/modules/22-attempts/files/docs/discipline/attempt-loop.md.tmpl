@@ -1,0 +1,127 @@
+# Lines of attack
+
+Open this when you commit to an approach on a target, when a worker returns, {{#if modules.gates}}when a
+red-team verdict arrives, {{/if}}or when `bin/attempts` prints a flag. The records live in
+[wiki/attempts/](../../wiki/attempts/_index.md); terms are in [GLOSSARY.md](../../GLOSSARY.md).
+How to choose an approach, spend a budget and run the stall audit is the `attack` skill.
+
+## Why a ledger of lines
+
+Most attempts fail, and a failed attempt is often the most informative thing a session
+produces: the exact step where it broke, the partial result it established, the tool that
+was nearly strong enough. Without a record that knowledge ends with the session, and the
+next session retries the same route without knowing why it died. A record per line of
+attack keeps it, and lets a later result revive it.
+
+## Recording
+
+**Every line of attack gets a record when you commit to it.** That is: when you choose a
+route after a worker's NEED-DIRECTION, when you start work on a brick that is not routine, or
+when you dispatch several approaches in parallel (one record each). Use
+`bin/attempts new <target> "<the approach in one line>" --moves <ids>`, naming the moves
+(`bin/attempts --moves`) the approach uses, if any.
+*Why:* a line that was never recorded cannot be found, counted or revived.
+*Anti-scope:* a routine brick that is expected to go through (a computation, a write-up step)
+needs no record unless it fails.
+
+**The coordinator owns the ledger; workers never write records.** A worker returns its
+`TRIED:` lines; the coordinator files the return with
+`bin/attempts log <id> "<what happened>" --from-return -`, pasting the return on standard
+input, where it is kept verbatim as one entry. A session you work on the line yourself is
+logged with `--session`. Both spend the line's budget; a `--repair` entry does not.
+*Why:* workers return text and must not write durable records; one owner keeps ids unique.
+
+**Say exactly where it broke, and whether the method or only this execution failed.** When a
+line is set aside, `bin/attempts set-aside` records the step that failed, the kind of
+obstruction (`method`, `execution` or `unknown`), what the line established anyway, and what
+would revive it. A worker may propose the kind; the coordinator decides it.
+*Why:* "it failed" teaches nothing; "the bound loses a log factor at step 3, and a uniform
+bound would fix it" tells the next session what to try and what to avoid.
+*Anti-scope:* if you do not know why it failed, say `unknown`; never guess a cause.
+
+**`refuted` only for a precise statement that was disproved.** `bin/attempts refute` needs
+the statement itself. A search that found nothing is `set-aside`, not refuted. An attack that
+breaks one candidate construction is logged on the line with `--refuted-by "<witness>"`,
+and the line stays active.
+*Why:* a wrong "this route is dead" note keeps later work away from a route that was never
+actually closed.
+
+**Write through the script.** `bin/attempts` numbers records, stamps dates and only appends
+to the log; a correction is a new entry. {{#if modules.commit_gate}}The commit gate prints the flags whenever a
+commit touches `wiki/attempts/`, so a hand edit is caught at the next commit at the latest.{{else}}A hand edit prints no flag, so prefer the script.{{/if}}
+
+**Before briefing work on a target, read what already failed there.**
+`bin/attempts --obstructions <target>` gives one line per set-aside or refuted line: put them
+in the brief's "Already ruled out".
+
+## Units
+
+| Thing | Counts | Used by |
+|---|---|---|
+| attempt | one edit-plus-check cycle inside a brick | a worker's escalation triggers |
+| line of attack (record) | one approach to one target, possibly over many sessions | `bin/attempts` |
+| counted lines | set-aside, refuted and stepped-down lines on one target since its last stall audit | `AUDIT DUE` (`[attempts] audit_after`) |
+| budget | worker returns and sessions on one line, not repairs; never time | `BUDGET REACHED` (`[attempts] budget_returns`, or the record's `budget:`) |
+
+## The flags
+
+`bin/attempts` prints a target's summary line after every write, with these flags:
+
+- **`AUDIT DUE`**: the target has `audit_after` (default 3) or more counted lines since its
+  last stall audit. Run the Audit in the `attack` skill before the next attempt on that
+  target.
+- **`BUDGET REACHED`**: an active line has used its budget. Decide, as the `attack` skill's
+  Budgets section says: extend it if it is productive (`bin/attempts extend`, naming the
+  sign), switch approach, step down a rung, or set it aside.
+- **`STALE`**: an active line has had no log entry while `stale_after` (default 5) entries
+  landed on other lines of the same target. Set it aside with where it stands, or log why it
+  is still open.
+
+## Stall audit
+
+Repeated failure on one target is evidence against the approaches; it is only weak evidence
+against the claim. A long stall is often caused by a wrong belief, built on examples that
+all share some property the claim does not need. The audit's steps are in the `attack`
+skill; it is recorded as
+`bin/attempts log <the newest counted line> "@principle:stall-audit — <what it produced>"`,
+and the flag clears only when the text after the dash says what the audit found.
+
+## Moves and their scores
+
+The registry's entries with `kind = "move"` are prompts for an approach, with worked
+examples in [moves.md](moves.md). `bin/attempts --moves` lists them best first: a move's
+score rises each time a line that used it closes with it credited (`--contributed` at
+close), and falls a little when a line that chose it closes without the credit. Noise is
+added on every call, so one success hardly moves the order and a move that keeps working
+rises. `--moves --scores` shows the scores. Switching a move off (`on = false` in the
+registry) is {{owner}}'s call.
+
+## Principles and their usage
+
+Some rules in this project's docs carry a tag, `(principle: <id>)`, and are listed in
+[docs/principles.toml](../principles.toml) with the reason for each and when it does not
+apply. Nothing enforces them. Instead, their use is recorded and reviewed:
+
+- **When you apply one, write one line where the work is recorded** (an attempt record's log,
+  a question or conjecture file, a work folder's README):
+  `@principle:<id> — <what it produced>`. The text after the dash must say what applying it
+  gave you ("checked n ≤ 12, no counterexample"); a bare tag is counted as a bare tag.
+- **When you deliberately skip one and are giving a reason anyway**, record the reason the
+  same way: `@principle-skipped:<id> — <why it does not apply here>`. Do not write a skip
+  line just to have one; write it where you would give a reason anyway.
+- `bin/principle-usage` counts uses and skips over a window, and counts the situations that
+  call for each principle where they can be counted. {{#if modules.program_review}}The program review reads it and
+  proposes wiring in a principle whose situation came up without it being used.{{else}}Read it now and then, to see
+  which principles are being used and which are being missed.{{/if}}
+
+## What this is not
+
+{{#if modules.reflect}}
+- Not the friction log: a research dead end is a result, not workflow friction.
+{{/if}}
+{{#if modules.conjectures}}
+- Not evidence about a conjecture's truth: that goes in the conjecture's `## Evidence`. A
+  line of attack on a conjecture records the route, not the verdict.
+{{/if}}
+- Not a place to claim a result: a lemma a line established is claimed by recording it where
+  results are recorded{{#if modules.conjectures}} (a conjecture or a known result){{/if}}, which is reviewed.

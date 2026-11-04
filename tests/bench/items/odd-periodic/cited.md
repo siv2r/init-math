@@ -1,0 +1,2 @@
+- Euler's product (Andrews, The Theory of Partitions, Thm 1.1): sum_{n>=0} p(n) q^n = prod_{n>=1} (1 - q^n)^(-1), with p(0) = 1.
+- The pentagonal number theorem (Andrews, The Theory of Partitions, Cor. 1.7): prod_{n>=1} (1 - q^n) = sum over all integers k of (-1)^k q^(k(3k-1)/2).

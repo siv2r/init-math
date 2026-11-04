@@ -1,0 +1,15 @@
+## General
+
+- **owner**: {{owner}}, the person who directs this project. Some decisions are theirs alone (see {{#if harness.coordinator_file}}{{harness.coordinator_file}}{{else}}AGENTS.md{{/if}}, "Ground rules").
+- **coordinator**: the agent session talking to the owner. It plans, dispatches other agents, checks their work and records results.{{#if harness.coordinator_file}} Its own rules are in {{harness.coordinator_file}}, which only it gets.{{/if}}
+- **worker**: an agent the coordinator dispatches to carry out one well-specified unit of work.
+- **reviewer**: a fresh-context agent whose only job is to check one document from one angle and return a verdict and a list of problems. It never edits, and it always runs on the strong tier (see `project.toml` `[tiers]`).{{#if modules.gates}} The core three are `claim-auditor`, `proof-referee` and `red-team`.{{/if}}
+- **durable**: written to a file in this repository (and committed), as opposed to only said in a chat or held in context.
+- **harness**: the program the agents run in ({{harness.name}} for this project).
+- **intake check**: the coordinator's list, before a long computation or a new line of work, of what the task leaves open; each item is answered from the standing procedures or asked of the owner, in one question.
+- **standing procedure**: one of the owner's default answers in `notes/procedures.md`, used unless the owner says otherwise for a task.
+- **genuine fork**: a choice that is the owner's to make: mutually exclusive designs, an irreversible or outward-facing action, or a scope decision. Only at one should an agent stop and ask.
+{{#if !modules.experiments}}
+- **smoke test**: a seconds-long run on a few small, hard cases that checks a script or pipeline works before anything bigger is started.
+{{/if}}
+- **known-answer check**: running a tool on a case whose correct output is already known independently (a published value, a hand computation, a trivial case) before trusting it on cases that are not.{{#if modules.experiments}} In an experiment the driver re-computes such a case itself, so every run shows the instrument works.{{/if}}

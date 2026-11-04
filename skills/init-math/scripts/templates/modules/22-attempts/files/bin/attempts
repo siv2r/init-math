@@ -1,0 +1,862 @@
+#!/usr/bin/env python3
+"""The attempt ledger: one record per line of attack, in wiki/attempts/ (see
+docs/discipline/attempt-loop.md).
+
+selftest: yes
+
+A line of attack is one approach to one target (a question, a conjecture, a brick of a work
+folder, or a named lemma), tried over possibly many sessions. Its record says where it broke,
+what it established anyway, and what would revive it, so the next session does not retry a
+dead route blind. Write records through this script: it numbers them, stamps dates, and only
+ever appends to a record's log.
+
+Usage:
+  bin/attempts                          one line per target, with flags (same as --summary)
+  bin/attempts new TARGET "APPROACH" [--from-return -] [--moves ID,ID] [--budget N]
+                   [--small-cases informative|not-informative]
+  bin/attempts log ID "TEXT" [--from-return -] [--session | --repair | --refuted-by "WITNESS"]
+  bin/attempts extend ID --because "THE SIGN OF PROGRESS" [--by N]
+  bin/attempts set-aside ID --broke "STEP" --kind method|execution|unknown --revive "IF"
+                         [--established "WHAT"] [--contributed ID,ID]
+  bin/attempts refute ID --statement "THE PRECISE STATEMENT DISPROVED" [--contributed ID,ID]
+  bin/attempts dormant ID (--why "REASON" | --stepped-down [--contributed ID,ID])
+  bin/attempts revive ID --because "WHAT CHANGED"
+  bin/attempts succeed ID --recorded-at PATH [--contributed ID,ID]
+  bin/attempts --target ID              the records for one target (work/<slug> matches its bricks)
+  bin/attempts --obstructions ID        one line per set-aside or refuted record of a target
+                                        (paste it into a brief's "Already ruled out")
+  bin/attempts --moves [--scores] [--seed S]
+                                        the registered moves, best first, with noise (below)
+  bin/attempts --gate                   only the flagged lines (the commit gate prints these)
+  bin/attempts --check                  lint every record
+  bin/attempts --root DIR               read the project at DIR (default: this script's project)
+  bin/attempts --selftest
+
+TARGET is Q<nnn>, C<nnn>, work/<slug>#<brick-number> or lemma:<slug>. With --from-return -,
+a worker's return is read from standard input and kept, verbatim and indented, as one log
+entry. Every write prints the target's summary line afterwards.
+
+Budget: a line's budget counts worker returns (entries made with --from-return) and
+sessions (--session), never time; a --repair entry does not count. The default is
+[attempts] budget_returns; `extend` raises it when the line is productive, and logs the sign.
+
+Construction work: when a red-team attack breaks the current construction, log it with
+--refuted-by and keep the line active; log the fix with --repair. `refute` is only for a
+precise statement that was disproved.
+
+Moves: the registry's entries with kind = "move". --moves orders them by a score that
+changes each time a line that chose a move (--moves on `new`) or credited it (--contributed
+at close) closes: +1 when credited, minus [attempts] move_miss_penalty when chosen and not
+credited, fading with a half-life of move_half_life_closes closed lines. Independent noise
+(move_noise) is added on every call, so early results barely move the order and a move that
+keeps working rises. --scores shows the scores; --seed makes the order reproducible.
+
+Flags in the summary:
+  AUDIT DUE   the target has [attempts] audit_after or more set-aside, refuted or
+              stepped-down lines since its last audit. Run the stall audit (the attack
+              skill, section Audit), then record it with
+              bin/attempts log <id> "@principle:stall-audit — <what it produced>".
+  BUDGET REACHED
+              an active line has used its budget: extend it if productive, switch
+              approach, step down a rung, or set it aside (the attack skill, section Budgets).
+  STALE       an active line has had no log entry while [attempts] stale_after entries
+              landed on other lines of the same target: set it aside, or log where it stands.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import os
+import random
+import re
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+STATUSES = ("active", "set-aside", "refuted", "dormant", "succeeded")
+KINDS = ("method", "execution", "unknown")
+TARGET = re.compile(r"^(Q\d{3}|C\d{3}|work/[a-z0-9][a-z0-9-]*#\d+|lemma:[a-z0-9][a-z0-9-]*)$")
+REC_FILE = re.compile(r"^(L\d{3,})-[a-z0-9-]+\.md$")
+ENTRY = re.compile(r"^- (\d{4}-\d{2}-\d{2}): (.*)$")
+CITE = re.compile(r"@principle:([a-z0-9-]+)\s+(?:—|--|-)\s*(.*?)\s*$")
+CITE_SKIP = re.compile(r"@principle-skipped:([a-z0-9-]+)\s+(?:—|--|-)\s*(.*?)\s*$")
+PLACEHOLDERS = {"", "n/a", "na", "done", "ok", "-", "—", "tbd", "todo", "<what it produced>"}
+SECTION_ORDER = ("Why it looked promising", "Prediction", "Alternatives not chosen", "Log",
+                 "Where it broke", "What it established", "Revive if", "Refuted statement",
+                 "At close")
+REQUIRED = {"set-aside": ("Where it broke", "Revive if"),
+            "refuted": ("Refuted statement",)}
+DEFAULTS = {"dir": "wiki/attempts", "registry": "docs/principles.toml",
+            "audit_after": 3, "stale_after": 5, "budget_returns": 4,
+            "move_noise": 1.0, "move_miss_penalty": 0.25, "move_half_life_closes": 20,
+            "construction_bonus": 0.5}
+SMALL_CASES = ("default", "informative", "not-informative")
+EXTENDED = re.compile(r"^budget extended by (\d+):")
+
+
+# --- reading -------------------------------------------------------------------------------
+
+def load_config(root: Path) -> dict:
+    try:
+        with open(root / "project.toml", "rb") as f:
+            cfg = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        cfg = {}
+    a = {**DEFAULTS, **cfg.get("attempts", {})}
+    a["harness"] = cfg.get("project", {}).get("harness", "")
+    a["construction"] = cfg.get("field_profile", {}).get("construction", False) is True
+    return a
+
+
+def skill_ref(cfg: dict, section: str) -> str:
+    """Where the next step lives, in the harness's own words."""
+    if cfg.get("harness") == "codex":
+        return f"$attack, section {section}"
+    if cfg.get("harness") == "claude":
+        return f"load the attack skill, section {section}"
+    return f"the attack skill, section {section}"
+
+
+def id_list(text: str | None) -> list[str]:
+    return [x.strip() for x in (text or "").replace(" ", ",").split(",") if x.strip()]
+
+
+def today() -> str:
+    return os.environ.get("ATTEMPTS_TODAY") or datetime.date.today().isoformat()
+
+
+def parse(text: str) -> tuple[dict, str, dict[str, list[str]]]:
+    """(frontmatter, title line, sections: heading -> lines)."""
+    meta: dict = {}
+    body = text
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end >= 0:
+            for line in text[4:end].splitlines():
+                key, sep, val = line.partition(":")
+                if sep and key.strip() and not key.strip().startswith("#"):
+                    meta[key.strip()] = re.sub(r"\s+#.*$", "", val).strip()
+            body = text[end + 4:].lstrip("\n")
+    title, sections, cur = "", {}, None
+    for line in body.splitlines():
+        if line.startswith("# ") and not title and cur is None:
+            title = line
+        elif line.startswith("## "):
+            cur = re.sub(r"\s*\(.*$", "", line[3:]).strip()
+            sections[cur] = []
+        elif cur is not None:
+            sections[cur].append(line)
+    for k in sections:
+        while sections[k] and not sections[k][-1].strip():
+            sections[k].pop()
+        while sections[k] and not sections[k][0].strip():
+            sections[k].pop(0)
+    return meta, title, sections
+
+
+def render(meta: dict, title: str, sections: dict[str, list[str]]) -> str:
+    keys = ("id", "target", "status", "status-since", "dormant-reason", "recorded-at",
+            "small-cases", "budget", "moves")
+    out = ["---"] + [f"{k}: {meta[k]}" for k in keys if meta.get(k)]
+    out += [f"{k}: {v}" for k, v in meta.items() if k not in keys and v]
+    out += ["---", title, ""]
+    for name in [n for n in SECTION_ORDER if n in sections] + \
+            [n for n in sections if n not in SECTION_ORDER]:
+        out += [f"## {name}"] + sections[name] + [""]
+    return "\n".join(out).rstrip("\n") + "\n"
+
+
+class Record:
+    def __init__(self, path: Path):
+        self.path = path
+        self.meta, self.title, self.sections = parse(path.read_text(encoding="utf-8"))
+
+    @property
+    def id(self) -> str:
+        return self.meta.get("id", "")
+
+    @property
+    def target(self) -> str:
+        return self.meta.get("target", "")
+
+    @property
+    def status(self) -> str:
+        return self.meta.get("status", "")
+
+    def entries(self) -> list[tuple[str, str]]:
+        return [(m.group(1), m.group(2)) for m in
+                (ENTRY.match(ln) for ln in self.sections.get("Log", [])) if m]
+
+    def budget_entries(self) -> int:
+        """Log entries that spend budget: a worker return or a session, not a repair."""
+        n, cur = 0, None
+        for ln in self.sections.get("Log", []) + ["- end"]:
+            if ln.startswith("- "):
+                if cur is not None and not cur[0].startswith("repair:") and \
+                        (cur[1] or cur[0].startswith("session:")):
+                    n += 1
+                m = ENTRY.match(ln)
+                cur = [m.group(2), False] if m else None
+            elif cur is not None and ln.startswith("  >"):
+                cur[1] = True
+        return n
+
+    def budget(self, cfg: dict) -> int:
+        b = self.meta.get("budget", "default")
+        base = int(b) if b.isdigit() else int(cfg["budget_returns"])
+        return base + sum(int(m.group(1)) for _, t in self.entries() for m in [EXTENDED.match(t)] if m)
+
+    def moves(self) -> list[str]:
+        return id_list(self.meta.get("moves", "").strip("[]"))
+
+    def contributed(self) -> list[str]:
+        for ln in self.sections.get("At close", []):
+            m = re.match(r"^contributed: \[(.*)\]", ln)
+            if m:
+                return id_list(m.group(1))
+        return []
+
+    def closed(self) -> bool:
+        return self.status in ("set-aside", "refuted", "succeeded") or \
+            (self.status == "dormant" and self.meta.get("dormant-reason") == "stepped-down")
+
+    def last_date(self) -> str:
+        e = self.entries()
+        return e[-1][0] if e else self.meta.get("status-since", "")
+
+    def counted(self) -> bool:
+        return self.status in ("set-aside", "refuted") or \
+            (self.status == "dormant" and self.meta.get("dormant-reason") == "stepped-down")
+
+    def save(self) -> None:
+        self.path.write_text(render(self.meta, self.title, self.sections), encoding="utf-8")
+
+
+def records(root: Path, cfg: dict) -> list[Record]:
+    d = root / cfg["dir"]
+    if not d.is_dir():
+        return []
+    return [Record(p) for p in sorted(d.iterdir()) if REC_FILE.match(p.name)]
+
+
+def valid_cite(clause: str) -> bool:
+    return clause.strip().lower() not in PLACEHOLDERS
+
+
+def last_audit(recs: list[Record]) -> str:
+    dates = [date for r in recs for date, text in r.entries()
+             for m in [CITE.search(text)] if m and m.group(1) == "stall-audit" and valid_cite(m.group(2))]
+    return max(dates, default="")
+
+
+# --- summary and flags ---------------------------------------------------------------------
+
+def by_target(recs: list[Record]) -> dict[str, list[Record]]:
+    out: dict[str, list[Record]] = {}
+    for r in recs:
+        out.setdefault(r.target, []).append(r)
+    return dict(sorted(out.items()))
+
+
+def flags(target: str, recs: list[Record], cfg: dict) -> list[str]:
+    out = []
+    since = last_audit(recs)
+    due = [r for r in recs if r.counted() and r.meta.get("status-since", "") > since]
+    if len(due) >= int(cfg["audit_after"]):
+        newest = max(due, key=lambda r: (r.meta.get("status-since", ""), r.id))
+        out.append(f"AUDIT DUE: {target} has {len(due)} set-aside, refuted or stepped-down lines "
+                   f"since its last audit. Run the stall audit ({skill_ref(cfg, 'Audit')}), "
+                   f"then: bin/attempts log {newest.id} "
+                   f"\"@principle:stall-audit — <what it produced>\"")
+    for r in recs:
+        if r.status != "active":
+            continue
+        used, budget = r.budget_entries(), r.budget(cfg)
+        if used >= budget:
+            out.append(f"BUDGET REACHED: {r.id} ({target}) has used {used} of {budget} worker returns "
+                       f"or sessions. Decide ({skill_ref(cfg, 'Budgets')}): extend if it is productive "
+                       f"(bin/attempts extend {r.id} --because \"<the sign>\"), switch approach, "
+                       f"step down a rung, or set it aside")
+        later = sum(1 for o in recs if o is not r for d, _ in o.entries() if d > r.last_date())
+        if later >= int(cfg["stale_after"]):
+            out.append(f"STALE: {r.id} ({target}) has no log entry while {later} landed on other "
+                       f"lines of the same target: set it aside, or log where it stands")
+    return out
+
+
+def summary_line(target: str, recs: list[Record]) -> str:
+    n = {s: sum(1 for r in recs if r.status == s) for s in STATUSES}
+    parts = [f"{n[s]} {s}" for s in STATUSES if n[s]]
+    return f"{target}: " + ", ".join(parts)
+
+
+def summary(root: Path, cfg: dict, out=print, only_flags: bool = False, target: str = "") -> int:
+    groups = by_target(records(root, cfg))
+    if target:
+        groups = {t: rs for t, rs in groups.items() if t == target}
+    if not groups and not only_flags:
+        out("no attempt records" + (f" for {target}" if target else "") +
+            f" (bin/attempts new <target> \"<approach>\" starts one)")
+    for t, rs in groups.items():
+        fl = flags(t, rs, cfg)
+        if not only_flags:
+            out(summary_line(t, rs))
+        for f in fl:
+            out(("  " if not only_flags else "") + f)
+    return 0
+
+
+def list_target(root: Path, cfg: dict, target: str, out=print) -> int:
+    recs = [r for r in records(root, cfg)
+            if r.target == target or (target.startswith("work/") and "#" not in target
+                                      and r.target.startswith(target + "#"))]
+    if not recs:
+        out(f"no attempt records for {target}")
+    for r in recs:
+        out(f"{r.id} [{r.status} since {r.meta.get('status-since', '?')}] {r.title[2:].split(': ', 1)[-1]}")
+    return 0
+
+
+def obstructions(root: Path, cfg: dict, target: str, out=print) -> int:
+    recs = [r for r in records(root, cfg) if r.target == target and r.status in ("set-aside", "refuted")]
+    if not recs:
+        out(f"(no recorded obstructions for {target})")
+    for r in recs:
+        approach = r.title[2:].split(": ", 1)[-1]
+        if r.status == "refuted":
+            stmt = " ".join(r.sections.get("Refuted statement", [])).strip()
+            out(f"- {r.id} {approach}: refuted: {stmt}")
+        else:
+            broke = " ".join(r.sections.get("Where it broke", [])).strip()
+            revive = " ".join(r.sections.get("Revive if", [])).strip()
+            out(f"- {r.id} {approach}: broke at {broke}; revive if {revive}")
+    return 0
+
+
+# --- lint ----------------------------------------------------------------------------------
+
+def registry(root: Path, cfg: dict) -> dict | None:
+    try:
+        with open(root / cfg["registry"], "rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+
+
+def registry_ids(root: Path, cfg: dict) -> set[str] | None:
+    reg = registry(root, cfg)
+    return None if reg is None else set(reg)
+
+
+def move_ids(root: Path, cfg: dict, enabled_only: bool = False) -> list[str] | None:
+    reg = registry(root, cfg)
+    if reg is None:
+        return None
+    return [k for k, v in reg.items() if isinstance(v, dict) and v.get("kind") == "move"
+            and not (enabled_only and v.get("on") is False)]
+
+
+# --- moves ---------------------------------------------------------------------------------
+
+def move_scores(root: Path, cfg: dict) -> dict[str, tuple[float, int]]:
+    """move id -> (score, closed lines that chose or credited it)."""
+    reg = registry(root, cfg) or {}
+    scores = {k: [float(cfg["construction_bonus"]) if cfg["construction"] and v.get("construction") is True
+                  else 0.0, 0] for k, v in reg.items() if isinstance(v, dict) and v.get("kind") == "move"}
+    closes = sorted((r for r in records(root, cfg) if r.closed()),
+                    key=lambda r: (r.meta.get("status-since", ""), r.id))
+    half, miss = float(cfg["move_half_life_closes"]), float(cfg["move_miss_penalty"])
+    for i, r in enumerate(closes):
+        w = 0.5 ** ((len(closes) - 1 - i) / half) if half > 0 else 1.0
+        credited = set(r.contributed())
+        for m in set(r.moves()) | credited:
+            if m in scores:
+                scores[m][0] += w * (1.0 if m in credited else -miss)
+                scores[m][1] += 1
+    return {k: (v[0], v[1]) for k, v in scores.items()}
+
+
+def list_moves(root: Path, cfg: dict, show_scores: bool, seed: str | None, out=print) -> int:
+    reg = registry(root, cfg)
+    enabled = move_ids(root, cfg, enabled_only=True)
+    if not enabled:
+        out(f"no moves registered (entries with kind = \"move\" in {cfg['registry']})")
+        return 0
+    scores = move_scores(root, cfg)
+    rnd = random.Random(seed) if seed is not None else random.Random()
+    noise = float(cfg["move_noise"])
+    keyed = [(scores[m][0] + (rnd.gauss(0.0, noise) if noise > 0 else 0.0), i, m) for i, m in enumerate(enabled)]
+    keyed.sort(key=lambda t: (-t[0], t[1]))
+    out("Moves, best first. The order is noisy on purpose: read past the top line, and choose for "
+        "the target, not for the rank.")
+    for _, _, m in keyed:
+        tail = f"  (score {scores[m][0]:+.2f} over {scores[m][1]} closed lines)" if show_scores else ""
+        out(f"- {m}: {reg[m].get('says', '')}{tail}")
+    return 0
+
+
+def check(root: Path, cfg: dict, out=print) -> int:
+    problems: list[str] = []
+    seen: dict[str, str] = {}
+    known = registry_ids(root, cfg)
+    moves = move_ids(root, cfg)
+    for r in records(root, cfg):
+        where = r.path.name
+        fid = REC_FILE.match(r.path.name).group(1)
+        for k in ("id", "target", "status", "status-since"):
+            if not r.meta.get(k):
+                problems.append(f"{where}: frontmatter has no `{k}:`")
+        if r.id and r.id != fid:
+            problems.append(f"{where}: id {r.id} does not match the file name")
+        if r.id in seen:
+            problems.append(f"{where}: id {r.id} also used by {seen[r.id]}")
+        seen[r.id] = where
+        if r.target and not TARGET.match(r.target):
+            problems.append(f"{where}: target `{r.target}` is not Q<nnn>, C<nnn>, "
+                            f"work/<slug>#<n> or lemma:<slug>")
+        if r.status and r.status not in STATUSES:
+            problems.append(f"{where}: status `{r.status}` is not one of {', '.join(STATUSES)}")
+        for sec in REQUIRED.get(r.status, ()):
+            if not "".join(r.sections.get(sec, [])).strip():
+                problems.append(f"{where}: status {r.status} needs a filled `## {sec}` section")
+        since = r.meta.get("status-since", "")
+        if since and not any(d == since and r.status in t for d, t in r.entries()):
+            problems.append(f"{where}: no log entry dated {since} names the status `{r.status}`")
+        sc = r.meta.get("small-cases", "default")
+        if sc not in SMALL_CASES:
+            problems.append(f"{where}: small-cases `{sc}` is not one of {', '.join(SMALL_CASES)}")
+        b = r.meta.get("budget", "default")
+        if b != "default" and not b.isdigit():
+            problems.append(f"{where}: budget `{b}` is not a number or `default`")
+        if moves is not None:
+            for m in r.moves() + r.contributed():
+                if m not in moves:
+                    problems.append(f"{where}: names unknown move `{m}` (not a kind = \"move\" "
+                                    f"entry of {cfg['registry']})")
+        if known is not None:
+            text = "\n".join(t for _, t in r.entries())
+            for m in list(CITE.finditer(text)) + list(CITE_SKIP.finditer(text)):
+                if m.group(1) not in known:
+                    problems.append(f"{where}: cites unknown principle `{m.group(1)}` "
+                                    f"(not in {cfg['registry']})")
+    for p in problems:
+        out(p)
+    out(f"attempts check: {len(problems)} problem(s)")
+    return 1 if problems else 0
+
+
+# --- writing -------------------------------------------------------------------------------
+
+def slug(text: str) -> str:
+    words = re.sub(r"[^a-z0-9]+", " ", text.lower()).split()[:5]
+    return "-".join(words) or "line"
+
+
+def next_id(root: Path, cfg: dict) -> str:
+    nums = [int(REC_FILE.match(p.name).group(1)[1:]) for p in
+            ((root / cfg["dir"]).iterdir() if (root / cfg["dir"]).is_dir() else [])
+            if REC_FILE.match(p.name)]
+    return f"L{max(nums, default=0) + 1:03d}"
+
+
+def find(root: Path, cfg: dict, rid: str) -> Record:
+    for r in records(root, cfg):
+        if r.id == rid:
+            return r
+    raise SystemExit(f"no attempt record {rid} in {cfg['dir']}/")
+
+
+def entry_lines(text: str, stdin_text: str | None) -> list[str]:
+    lines = [f"- {today()}: {text}".rstrip()]
+    if stdin_text:
+        lines += ["  > " + ln if ln.strip() else "  >" for ln in stdin_text.rstrip("\n").splitlines()]
+    return lines
+
+
+def append(r: Record, text: str, stdin_text: str | None = None) -> None:
+    r.sections.setdefault("Log", []).extend(entry_lines(text, stdin_text))
+
+
+def check_moves(root: Path, cfg: dict, ids: list[str], out) -> bool:
+    known = move_ids(root, cfg)
+    bad = [m for m in ids if known is not None and m not in known]
+    if bad:
+        out(f"unknown move(s) {', '.join(bad)}; registered moves: {', '.join(known or []) or 'none'}")
+    return not bad
+
+
+def close_with(r: Record, contributed: list[str]) -> None:
+    if contributed:
+        r.sections["At close"] = [f"contributed: [{', '.join(contributed)}] (hindsight)"]
+
+
+def transition(r: Record, status: str, note: str) -> None:
+    r.meta["status"] = status
+    r.meta["status-since"] = today()
+    append(r, f"status → {status}: {note}")
+
+
+def after_write(root: Path, cfg: dict, target: str, out=print) -> None:
+    rs = by_target(records(root, cfg)).get(target, [])
+    out(summary_line(target, rs))
+    for f in flags(target, rs, cfg):
+        out("  " + f)
+
+
+def cmd_new(root: Path, cfg: dict, a, out=print) -> int:
+    if not TARGET.match(a.target):
+        out(f"target `{a.target}` must be Q<nnn>, C<nnn>, work/<slug>#<brick-number> or lemma:<slug>")
+        return 2
+    d = root / cfg["dir"]
+    d.mkdir(parents=True, exist_ok=True)
+    rid = next_id(root, cfg)
+    path = d / f"{rid}-{slug(a.approach)}.md"
+    if path.exists():
+        out(f"{path.name} already exists; not overwritten")
+        return 1
+    moves = id_list(a.moves)
+    if not check_moves(root, cfg, moves, out):
+        return 2
+    if a.budget is not None and a.budget < 1:
+        out("--budget is a positive number of worker returns or sessions")
+        return 2
+    meta = {"id": rid, "target": a.target, "status": "active", "status-since": today()}
+    if a.small_cases:
+        meta["small-cases"] = a.small_cases
+    if a.budget is not None:
+        meta["budget"] = str(a.budget)
+    if moves:
+        meta["moves"] = f"[{', '.join(moves)}]"
+    sections = {"Log": entry_lines(f"status → active: started", a.stdin_text)}
+    path.write_text(render(meta, f"# {rid}: {a.approach.strip()}", sections), encoding="utf-8")
+    out(f"created {cfg['dir']}/{path.name}")
+    after_write(root, cfg, a.target, out)
+    return 0
+
+
+def cmd_update(root: Path, cfg: dict, a, out=print) -> int:
+    r = find(root, cfg, a.id)
+    if r.status == "succeeded":
+        out(f"{r.id} has succeeded; start a new line instead of logging on it")
+        return 1
+    contributed = id_list(getattr(a, "contributed", None))
+    if contributed and not check_moves(root, cfg, contributed, out):
+        return 2
+    if a.cmd == "log":
+        text = a.text.strip()
+        if a.session:
+            text = f"session: {text}"
+        elif a.repair:
+            text = f"repair: {text}"
+        elif a.refuted_by:
+            if r.status != "active":
+                out(f"{r.id} is {r.status}; --refuted-by records an attack on an active construction")
+                return 1
+            text = f"refuted by: {a.refuted_by.strip()} — {text}"
+        append(r, text, a.stdin_text)
+    elif a.cmd == "extend":
+        if r.status != "active":
+            out(f"{r.id} is {r.status}; only an active line has a budget to extend")
+            return 1
+        n = a.by if a.by is not None else int(cfg["budget_returns"])
+        if n < 1:
+            out("--by is a positive number")
+            return 2
+        append(r, f"budget extended by {n}: @principle:budget-review — {a.because.strip()}")
+    elif a.cmd == "set-aside":
+        if r.status != "active":
+            out(f"{r.id} is {r.status}; only an active line can be set aside")
+            return 1
+        r.sections["Where it broke"] = [f"{a.broke.strip()} — obstruction is to: {a.kind}"]
+        r.sections["What it established"] = [(a.established or "nothing").strip()]
+        r.sections["Revive if"] = [a.revive.strip()]
+        close_with(r, contributed)
+        transition(r, "set-aside", f"broke at {a.broke.strip()}")
+    elif a.cmd == "refute":
+        if r.status != "active":
+            out(f"{r.id} is {r.status}; only an active line can be refuted")
+            return 1
+        r.sections["Refuted statement"] = [a.statement.strip()]
+        close_with(r, contributed)
+        transition(r, "refuted", a.statement.strip())
+    elif a.cmd == "dormant":
+        if r.status not in ("active", "set-aside"):
+            out(f"{r.id} is {r.status}; only an active or set-aside line can go dormant")
+            return 1
+        if contributed and not a.stepped_down:
+            out("--contributed is for a closing line; a dormant line waiting on a tool is not closed")
+            return 2
+        r.meta["dormant-reason"] = "stepped-down" if a.stepped_down else "waiting"
+        close_with(r, contributed)
+        transition(r, "dormant", "stepped down to an easier goal" if a.stepped_down else a.why.strip())
+    elif a.cmd == "revive":
+        if r.status not in ("set-aside", "dormant"):
+            out(f"{r.id} is {r.status}; only a set-aside or dormant line can be revived")
+            return 1
+        r.meta.pop("dormant-reason", None)
+        r.sections.pop("At close", None)
+        transition(r, "active", f"revived: {a.because.strip()}")
+    elif a.cmd == "succeed":
+        if r.status != "active":
+            out(f"{r.id} is {r.status}; only an active line can succeed")
+            return 1
+        r.meta["recorded-at"] = a.recorded_at
+        close_with(r, contributed)
+        transition(r, "succeeded", f"recorded at {a.recorded_at}")
+    r.save()
+    out(f"updated {cfg['dir']}/{r.path.name}")
+    after_write(root, cfg, r.target, out)
+    return 0
+
+
+# --- command line --------------------------------------------------------------------------
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="bin/attempts", add_help=False)
+    p.add_argument("-h", "--help", action="store_true")
+    p.add_argument("--selftest", action="store_true")
+    p.add_argument("--root")
+    p.add_argument("--summary", action="store_true")
+    p.add_argument("--gate", action="store_true")
+    p.add_argument("--check", action="store_true")
+    p.add_argument("--target", dest="list_target")
+    p.add_argument("--obstructions")
+    p.add_argument("--moves", dest="list_moves", action="store_true")
+    p.add_argument("--scores", action="store_true")
+    p.add_argument("--seed")
+    sub = p.add_subparsers(dest="cmd")
+    s = sub.add_parser("new")
+    s.add_argument("target")
+    s.add_argument("approach")
+    s.add_argument("--from-return", dest="from_return")
+    s.add_argument("--moves")
+    s.add_argument("--budget", type=int)
+    s.add_argument("--small-cases", dest="small_cases", choices=SMALL_CASES[1:])
+    s = sub.add_parser("log")
+    s.add_argument("id")
+    s.add_argument("text")
+    s.add_argument("--from-return", dest="from_return")
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--session", action="store_true")
+    g.add_argument("--repair", action="store_true")
+    g.add_argument("--refuted-by", dest="refuted_by")
+    s = sub.add_parser("extend")
+    s.add_argument("id")
+    s.add_argument("--because", required=True)
+    s.add_argument("--by", type=int)
+    s = sub.add_parser("set-aside")
+    s.add_argument("id")
+    s.add_argument("--broke", required=True)
+    s.add_argument("--kind", required=True, choices=KINDS)
+    s.add_argument("--revive", required=True)
+    s.add_argument("--established")
+    s.add_argument("--contributed")
+    s = sub.add_parser("refute")
+    s.add_argument("id")
+    s.add_argument("--statement", required=True)
+    s.add_argument("--contributed")
+    s = sub.add_parser("dormant")
+    s.add_argument("id")
+    g = s.add_mutually_exclusive_group(required=True)
+    g.add_argument("--why")
+    g.add_argument("--stepped-down", dest="stepped_down", action="store_true")
+    s.add_argument("--contributed")
+    s = sub.add_parser("revive")
+    s.add_argument("id")
+    s.add_argument("--because", required=True)
+    s = sub.add_parser("succeed")
+    s.add_argument("id")
+    s.add_argument("--recorded-at", dest="recorded_at", required=True)
+    s.add_argument("--contributed")
+    return p
+
+
+def run(argv: list[str], root: Path | None = None, stdin=None, out=print) -> int:
+    try:
+        a = build_parser().parse_args(argv)
+    except SystemExit as e:
+        return int(e.code or 0)
+    if a.help:
+        out(__doc__)
+        return 0
+    if a.selftest:
+        return selftest()
+    root = Path(a.root).resolve() if a.root else (root or Path(__file__).resolve().parent.parent)
+    cfg = load_config(root)
+    a.stdin_text = None
+    if getattr(a, "from_return", None):
+        if a.from_return != "-":
+            out("--from-return takes `-` (read the worker's return from standard input)")
+            return 2
+        a.stdin_text = (stdin or sys.stdin).read()
+    if a.cmd == "new":
+        return cmd_new(root, cfg, a, out)
+    if a.cmd:
+        return cmd_update(root, cfg, a, out)
+    if a.check:
+        return check(root, cfg, out)
+    if a.list_target:
+        return list_target(root, cfg, a.list_target, out)
+    if a.obstructions:
+        return obstructions(root, cfg, a.obstructions, out)
+    if a.list_moves:
+        return list_moves(root, cfg, a.scores, a.seed, out)
+    return summary(root, cfg, out, only_flags=a.gate)
+
+
+# --- selftest ------------------------------------------------------------------------------
+
+def selftest() -> int:
+    import io
+    failed = 0
+
+    def expect(label: str, cond: bool, detail: str = "") -> None:
+        nonlocal failed
+        print(f"{'ok  ' if cond else 'FAIL'} {label}" + (f": {detail}" if not cond and detail else ""))
+        failed += not cond
+
+    def go(root: Path, *argv: str, stdin: str = "", day: str = "2026-01-01") -> tuple[int, str]:
+        os.environ["ATTEMPTS_TODAY"] = day
+        lines: list[str] = []
+        rc = run(list(argv), root=root, stdin=io.StringIO(stdin), out=lines.append)
+        return rc, "\n".join(lines)
+
+    saved = os.environ.get("ATTEMPTS_TODAY")
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "project.toml").write_text('[project]\nharness = "claude"\n[attempts]\n'
+                                               'audit_after = 3\nstale_after = 2\n', encoding="utf-8")
+            (root / "docs").mkdir()
+            (root / "docs/principles.toml").write_text('[stall-audit]\nsays = "x"\n', encoding="utf-8")
+            rc, txt = go(root)
+            expect("empty ledger is not an error", rc == 0 and "no attempt records" in txt, txt)
+            rc, txt = go(root, "new", "free text target", "x")
+            expect("free-text target refused", rc == 2, txt)
+            rc, txt = go(root, "new", "C003", "Induction on the degree", "--from-return", "-",
+                         stdin="DONE\nTRIED: a\n")
+            expect("new allocates L001", rc == 0 and "L001-induction-on-the-degree.md" in txt, txt)
+            rec = (root / "wiki/attempts/L001-induction-on-the-degree.md").read_text()
+            expect("worker return kept as one indented entry", "  > TRIED: a" in rec, rec)
+            for i, step in ((2, "a"), (3, "b"), (4, "c")):
+                go(root, "new", "C003", f"Approach {step}", day=f"2026-01-0{i}")
+            ids = sorted(p.name[:4] for p in (root / "wiki/attempts").iterdir())
+            expect("ids are sequential", ids == ["L001", "L002", "L003", "L004"], str(ids))
+            rc, txt = go(root, "set-aside", "L001", "--broke", "the k=3 case", "--kind", "method",
+                         "--revive", "a bound uniform in k", day="2026-01-05")
+            expect("set-aside works", rc == 0 and "1 set-aside" in txt, txt)
+            rc, txt = go(root, "set-aside", "L001", "--broke", "x", "--kind", "method", "--revive", "y")
+            expect("set-aside twice refused", rc == 1, txt)
+            go(root, "refute", "L002", "--statement", "f(n) < 2^n for all n", day="2026-01-06")
+            rc, txt = go(root, "dormant", "L003", "--stepped-down", day="2026-01-07")
+            expect("third counted line raises AUDIT DUE", "AUDIT DUE: C003 has 3" in txt, txt)
+            expect("flag names the next step", "@principle:stall-audit" in txt and "L003" in txt, txt)
+            rc, txt = go(root, "log", "L003", "@principle:stall-audit", day="2026-01-08")
+            expect("bare tag does not clear the flag", "AUDIT DUE" in txt, txt)
+            rc, txt = go(root, "log", "L003", "@principle:stall-audit — tested n=7, outside the "
+                         "even class; belief unchanged", day="2026-01-08")
+            expect("audit with a clause clears the flag", "AUDIT DUE" not in txt, txt)
+            rc, txt = go(root, "--gate")
+            expect("--gate quiet when nothing is flagged", "AUDIT" not in txt, txt)
+            go(root, "log", "L001", "note", day="2026-01-09")
+            go(root, "log", "L002", "note", day="2026-01-10")
+            rc, txt = go(root, "--gate")
+            expect("an idle active line is STALE", "STALE: L004" in txt, txt)
+            rc, txt = go(root, "--obstructions", "C003")
+            expect("obstructions list set-aside and refuted lines",
+                   "broke at the k=3 case" in txt and "refuted: f(n) < 2^n" in txt, txt)
+            rc, txt = go(root, "revive", "L001", "--because", "a uniform bound landed", day="2026-01-11")
+            expect("revive returns a line to active", rc == 0 and "L001" not in go(root, "--obstructions", "C003")[1], txt)
+            rc, txt = go(root, "succeed", "L001", "--recorded-at", "wiki/conjectures/C003-x.md",
+                         day="2026-01-12")
+            rc, txt = go(root, "log", "L001", "more")
+            expect("no logging on a succeeded line", rc == 1, txt)
+            go(root, "new", "work/proof-campaign#2", "A brick line")
+            rc, txt = go(root, "--target", "work/proof-campaign")
+            expect("work/<slug> matches its bricks", "L005" in txt, txt)
+            rc, txt = go(root, "--check")
+            expect("records written by the script pass --check", rc == 0, txt)
+            p = root / "wiki/attempts/L004-approach-c.md"
+            p.write_text(p.read_text().replace("status: active", "status: set-aside"))
+            rc, txt = go(root, "--check")
+            expect("--check: set-aside without its sections", "needs a filled `## Where it broke`" in txt, txt)
+            expect("--check: status change without a log entry", "names the status `set-aside`" in txt, txt)
+            go(root, "log", "L005", "@principle:no-such-rule — something")
+            rc, txt = go(root, "--check")
+            expect("--check: unknown principle id", "unknown principle `no-such-rule`" in txt, txt)
+            (root / "wiki/attempts/TEMPLATE.md").write_text("---\nid: LNNN\n---\n")
+            (root / "wiki/attempts/_index.md").write_text("x\n")
+            rc, txt = go(root, "--target", "C003")
+            expect("TEMPLATE.md and _index.md are ignored", "LNNN" not in txt, txt)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "project.toml").write_text(
+                '[project]\nharness = "codex"\n[field_profile]\nconstruction = true\n'
+                '[attempts]\nbudget_returns = 2\nmove_noise = 0.0\n', encoding="utf-8")
+            (root / "docs").mkdir()
+            (root / "docs/principles.toml").write_text(
+                '[budget-review]\nsays = "x"\n[toy-model]\nkind = "move"\nsays = "a toy"\n'
+                '[shapes]\nkind = "move"\nsays = "enumerate"\nconstruction = true\n'
+                '[off-move]\nkind = "move"\nsays = "z"\non = false\n', encoding="utf-8")
+            rc, txt = go(root, "new", "Q001", "A toy model first", "--moves", "toy-model,nope")
+            expect("an unknown move is refused", rc == 2 and "nope" in txt, txt)
+            rc, txt = go(root, "new", "Q001", "A toy model first", "--moves", "toy-model",
+                         "--small-cases", "not-informative")
+            rec = (root / "wiki/attempts/L001-a-toy-model-first.md").read_text()
+            expect("moves and small-cases land in the frontmatter",
+                   "moves: [toy-model]" in rec and "small-cases: not-informative" in rec, rec)
+            go(root, "log", "L001", "first return", "--from-return", "-", stdin="PARTIAL\n")
+            rc, txt = go(root, "log", "L001", "fixed the gap", "--repair", "--from-return", "-",
+                         stdin="DONE\n")
+            expect("a repair does not spend budget", "BUDGET REACHED" not in txt, txt)
+            rc, txt = go(root, "log", "L001", "worked it myself", "--session")
+            expect("a session spends budget; BUDGET REACHED at the budget",
+                   "BUDGET REACHED: L001 (Q001) has used 2 of 2" in txt, txt)
+            expect("the flag names the next step in the harness's words", "$attack, section Budgets" in txt, txt)
+            rc, txt = go(root, "extend", "L001", "--because", "a new lemma: the k=2 case")
+            expect("extend clears the flag and records the sign",
+                   rc == 0 and "BUDGET REACHED" not in txt, txt)
+            rec = (root / "wiki/attempts/L001-a-toy-model-first.md").read_text()
+            expect("extend logs a budget-review citation",
+                   "budget extended by 2: @principle:budget-review — a new lemma" in rec, rec)
+            rc, txt = go(root, "log", "L001", "the 5-point witness", "--refuted-by", "the 5-cycle")
+            rec = (root / "wiki/attempts/L001-a-toy-model-first.md").read_text()
+            expect("--refuted-by keeps the line active",
+                   "status: active" in rec and "refuted by: the 5-cycle — the 5-point" in rec, rec)
+            rc, txt = go(root, "--moves", "--scores", "--seed", "1")
+            lines = [ln for ln in txt.splitlines() if ln.startswith("- ")]
+            expect("construction moves start ahead; an off move is hidden",
+                   lines and lines[0].startswith("- shapes") and "off-move" not in txt, txt)
+            go(root, "set-aside", "L001", "--broke", "x", "--kind", "method", "--revive", "y",
+               "--contributed", "toy-model", day="2026-01-02")
+            for i in (2, 3):
+                go(root, "new", "Q001", f"Toy {i}", "--moves", "toy-model", day=f"2026-01-0{i}")
+                go(root, "succeed", f"L00{i}", "--recorded-at", "x.md", "--contributed", "toy-model",
+                   day=f"2026-01-0{i + 2}")
+            rc, txt = go(root, "--moves", "--scores", "--seed", "1")
+            lines = [ln for ln in txt.splitlines() if ln.startswith("- ")]
+            expect("a move that keeps contributing rises to the top",
+                   lines and lines[0].startswith("- toy-model") and "over 3 closed lines" in lines[0], txt)
+            go(root, "new", "Q001", "Shapes", "--moves", "shapes", day="2026-01-06")
+            go(root, "set-aside", "L004", "--broke", "x", "--kind", "method", "--revive", "y",
+               day="2026-01-07")
+            sc = move_scores(root, load_config(root))
+            expect("a chosen move that did not contribute loses move_miss_penalty",
+                   abs(sc["shapes"][0] - 0.25) < 1e-9, str(sc))
+            (root / "project.toml").write_text('[attempts]\nmove_noise = 1.0\n', encoding="utf-8")
+            a1 = go(root, "--moves", "--seed", "7")[1]
+            expect("--seed makes the noisy order reproducible", a1 == go(root, "--moves", "--seed", "7")[1])
+            rc, txt = go(root, "--check")
+            expect("records with moves, budgets and repairs pass --check", rc == 0, txt)
+    finally:
+        if saved is None:
+            os.environ.pop("ATTEMPTS_TODAY", None)
+        else:
+            os.environ["ATTEMPTS_TODAY"] = saved
+    print(f"attempts selftest: {failed} failed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(run(sys.argv[1:]))

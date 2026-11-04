@@ -1,0 +1,13 @@
+## Mechanical scans
+
+- **scan**: a zero-model script in `bin/` that greps a document for one kind of mechanical defect. Scans are cheap and run before a reviewer; they never replace one.
+- **strength word**: a word that asserts certainty or generality ("proved", "always", "for all", "settled"); `bin/hedge-scan` lists them, headlines first.
+- **high-visibility line**: a header, a bold lead or a summary line ("Verdict:", "Status:"); read in isolation, so it must carry the hedges of the body it summarizes.
+- **finding code**: a private label invented inside one piece of work (F12, SB2). Fine inside the document that defines it; meaningless in a shared index.
+- **orphan**: an artifact on disk (question, conjecture, known result, experiment) that its store's `_index.md` never names. `.orphanignore` lists intentional ones.
+- **one-way link**: a known result that settles or suggests a conjecture whose file never mentions it back.
+- **difficulty estimate**: a phrase like "multi-week", "from scratch" or "out of scope" that can stop work; it needs a real search or attempt behind it.
+- **stale claim**: an old wording of a claim left elsewhere after the claim was corrected.
+- **correction marker**: a sign that a line is a corrected form (the warning sign, REFUTED, CORRECTED, SUPERSEDED, a strikethrough).
+- **setting hygiene**: using a fact or language valid in one setting in another (analytic language for formal power series, a finite-dimensional fact in infinite dimension).
+- **field rules**: this project's own proof conventions, in `project.toml` `[hygiene] rules`.

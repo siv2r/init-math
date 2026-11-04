@@ -1,0 +1,11 @@
+## Firsthand checks
+
+{{#if view.coordinator}}
+- Before building a method, search the project's own record, then send the `lit-search` agent for the gap, with a line `Internal prior art: <what you found>` in its brief.
+{{/if}}
+{{#if view.shared}}
+- A claim that decides work or enters a record gets one check of your own first: read a cited theorem yourself; search the whole library by name before saying it lacks something; scout before calling a task too hard.
+{{/if}}
+- {{#if view.coordinator}}Verify a premise before handing it to an agent.{{/if}}{{#if view.shared}}{{#if view.coordinator}} {{/if}}Never say "recorded" unless the write happened.{{/if}}
+
+Rules: [docs/discipline/firsthand-checks.md](docs/discipline/firsthand-checks.md).

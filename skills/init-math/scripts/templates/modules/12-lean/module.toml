@@ -1,0 +1,16 @@
+id = "lean"
+number = 12
+title = "Lean formalization"
+group = "C"
+status = "included"
+order = 120
+summary = "Lean conventions (sorry-free and axiom-clean, check definitions on examples, no stronger-statement substitutes), a lean-worker agent, library-name search and a checked build wrapper."
+off_in_presets = ["theory-only"]
+requires = { proof_assistant = "lean" }
+
+allow_commands = ["bin/lib-find"]  # pre-approved: checks and records only
+
+[[hooks]]
+script = "hooks/lean-build-nudge.py"
+event = "PreToolUse"
+actions = ["shell"]

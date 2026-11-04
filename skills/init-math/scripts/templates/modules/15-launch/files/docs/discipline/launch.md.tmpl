@@ -1,0 +1,120 @@
+# Long runs: launch, wait, verify
+
+A long run (anything past about two minutes) fails in a few typical ways: nobody is waiting
+when it ends, it runs on a stale build, it silently produces the wrong thing, or one bad
+input eats the whole budget. The `launch-preflight` skill is the checklist; this doc is
+the reasoning.
+
+## Rules
+
+**1. Every long job has exactly one tracked waiter.**
+{{#if harness.cap.background_callback}}
+Launch it as a background job the harness tracks, which wakes you when it ends, or keep a
+single `bin/wait-until-done` on it. Then end the turn; the completion notice is your
+continuation. Do not also schedule a short wakeup or write a polling loop: you would wake
+mid-job and learn nothing.
+{{else}}
+This harness does not wake you when a background job ends. So run long jobs in the
+foreground and wait for them, or poll to completion with `bin/wait-until-done` (not a
+hand-written loop) and report the real exit status. If a
+job may not finish within the session, run it under `bin/bg-run --runs runs/ --detach`,
+which runs it apart from the session, so it survives the session's end, and writes the
+command, the process id, the output and (at the end) the exit code to `runs/<timestamp>/`.
+The next session checks it with `bin/bg-run --status` (finished, still running, or died)
+and never assumes it finished. A detached job runs unwatched between sessions, so give it
+its own bound{{#if modules.experiments}} (an experiment run keeps its watchdog caps){{/if}}.
+{{/if}}
+*Why:* a job nobody waits for produces a result nobody reads, or dies with the session.
+*Anti-scope:* a command that finishes in seconds needs none of this.
+
+**2. Never background a long job and end the turn without a waiter**, and never let a
+dispatched agent start one: its turn ends when it returns, and the job is orphaned. Every
+brief that hands out a long computation says "do not background; wait for completion" or,
+better, "validate on one small case and return the command".
+
+**3. Use absolute paths in every launched command.** *Why:* the working directory of a
+later command, a waiter or another session is not the one you had in mind.
+
+**4. Build, verify, then launch, as separate steps.** *Why:* `build && launch` launches a
+stale binary when the build silently did nothing, and you find out hours later.
+
+**5. A unique output path per run.** *Why:* a re-run that writes over a run in progress
+corrupts both.
+
+**6. Exit 0 is not done.** Verify the deliverable: the output exists, has the expected
+size and rows, and the known-answer row matches. *Why:* a run can exit 0 having written
+nothing, or exit non-zero after writing everything you needed.
+
+**7. Know the method's resolution before paying for the run.** If the method cannot tell
+the cases you care about apart at these parameters, a bigger run will not help.
+
+**8. On a stall or a tripped limit, stop and rethink.** The response is written once, in
+{{#if modules.experiments}}[experiment-doctrine.md](experiment-doctrine.md#guarded-runs){{else}}this rule: stop; do not raise the limit and retry; make the run cheaper (smaller case, a cached result, a structural shortcut, a different tool) or propose the larger run to the owner with its estimated cost{{/if}}.
+
+**9. A usage limit with a reset time is a pause.** It is not the end of the run. Keep the
+RESUME HERE in `work/<slug>/README.md` current so the run can be picked up.
+{{#if harness.cap.schedule_wakeup}}
+If you can still act (a dispatched agent reported the limit), schedule a one-time task in
+this session for just after the reset; it fires only if the session is still open and idle
+then. Otherwise the next session resumes from RESUME HERE.
+{{else}}
+Nothing restarts the session after the reset: say in your report when it resets; the next
+session resumes from RESUME HERE.
+{{/if}}
+
+## The scripts
+
+- `bin/bg-run [--runs DIR [--detach]] -- CMD`: START and END markers, a heartbeat, the
+  command's exit code, and (with `--runs`) an on-disk run record; `--detach` runs the job
+  apart from the session and returns at once; `bin/bg-run --status RUN_DIR` reports
+  finished / running / died.
+- `bin/wait-until-done --run RUN_DIR | --pid PID | --file PATH | PATTERN`: blocks until the
+  job is done; exits 2 on timeout. Prefer `--run` or `--pid`; the PATTERN form ignores
+  itself and the shells that launched it, which a hand-written process-search loop does
+  not, and so never waits forever on its own command line.
+- `bin/heartbeat -- CMD`: a progress line every 30 seconds (every 60 under `bg-run`;
+  `--tick` changes it) and a STALL warning after 5 quiet minutes (`--stall`);
+  `--kill-on-stall` stops a hung job.
+
+Each has `--help` and `--selftest`.
+
+## The hooks
+
+`hooks/launch-guard.py` reads every shell command before it runs and enforces rules 1
+and 2 for their most common slips. It scans the command with quoted text, heredoc bodies
+and comments blanked, so a commit message that mentions `nohup ... &` is not a launch.
+
+- **A hand-rolled wait loop is refused** (every time): a `for` / `while` / `until` loop that
+  `sleep`s and checks a process or a file (`pgrep`, `ps`, `jobs`, `kill -0`, `test -e`,
+  `[ -f ... ]`, a harness task-output file). *Why:* `bin/wait-until-done` does the same wait
+  with a timeout, and a `pgrep -f` loop matches its own command line and so waits forever.
+  {{#if harness.cap.background_callback}}A job launched as a tracked background call needs no
+  wait at all: its completion notice is the continuation. {{/if}}*Instead:*
+  `bin/wait-until-done --pid | --run | --file | PATTERN`. A retry loop with no such check
+  (`until curl -sf URL; do sleep 2; done`) is allowed, and so is any command that uses
+  `bin/wait-until-done` or `bin/bg-run`.
+{{#if harness.cap.background_callback}}
+- **Backgrounding inside a background call is refused** (every time): a call already
+  launched with `run_in_background` whose command also detaches (`nohup ... &`, `&`,
+  `setsid`, `disown`). *Why:* the outer shell returns at once, the harness reports the job
+  finished, and the real job runs on untracked. *Instead:* make the plain command (or
+  `bin/bg-run -- CMD`) the body of the background call.
+{{/if}}
+- **A detached launch is nudged** (refused once; re-issuing the identical call proceeds):
+  `&`, `setsid` or `disown` in a call that is not a tracked background job. *Why:* nothing
+  will notice when the job ends or dies. *Instead:*
+  {{#if harness.cap.background_callback}}launch the plain command as a background call the
+  harness tracks.{{else}}run it in the foreground (`bin/bg-run -- CMD`), or, if it may outlive
+  the session, as `bin/bg-run --runs runs/ --detach -- CMD` and check it later with `--status` or
+  `bin/wait-until-done --run`.{{/if}} A command that also `wait`s for or `kill`s the job
+  (`a & b & wait`, a test server stopped at the end of the call) is not detached. A nudge,
+  not a block, because a deliberate short-lived helper is legitimate.
+
+*Lifting:* the owner starts the agent with `LAUNCH_GUARD_OFF=1` in its environment; written
+inside the command it does nothing. *Anti-scope:* natural spellings only; a launch hidden
+inside `sh -c '...'`, `screen` or `tmux` passes.
+{{#if harness.cap.schedule_wakeup}}
+
+`hooks/wakeup-waiter-nudge.py` nudges once when a short scheduled wakeup would duplicate a
+tracked background job launched in the same turn.
+{{/if}}

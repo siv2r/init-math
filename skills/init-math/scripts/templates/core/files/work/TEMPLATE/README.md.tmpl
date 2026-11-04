@@ -1,0 +1,49 @@
+---
+status: active        # active | done | parked
+{{#if modules.questions}}
+question: QNNN        # the question this work serves
+{{/if}}
+started: YYYY-MM-DD
+---
+# <What this work is trying to establish, in one sentence>
+
+<!-- Copy this folder to work/<slug>/ and fill this in; add a row to work/_index.md.
+     Everything this work produces goes in this folder: working documents, proofs in
+     progress, its manuscript, check scripts (checks/), its staging record. Briefs and
+     throwaway notes go in scratch/, which git ignores; a manuscript never does. Delete
+     this comment once filled. -->
+{{#if modules.questions}}
+
+## Question tie
+
+<!-- Which answer shape of the question this moves, and what each outcome (including
+     failure) would change. -->
+{{/if}}
+
+## ▶ RESUME HERE (updated YYYY-MM-DD)
+
+- **State:** <what is landed and committed>
+- **Next step:** <the precise next brick>
+- **Gotchas already found:** <false starts, non-obvious constraints>
+{{#if modules.attempts}}
+- **Lines of attack:** `bin/attempts --target work/<slug>`
+{{/if}}
+
+## Plan
+
+1. <brick: a stateable next step, with its finish line>
+
+## Files
+
+<!-- One line per file in this folder: what it holds and its state (draft, reviewed,
+     superseded by ...). The next reader starts here. -->
+
+## Outcome
+
+<!-- Filled when the work ends (status done or parked): what was established and at what
+     strength, what failed and why, and where each result now lives (for example{{#if modules.conjectures}} a
+     conjecture file,{{/if}}{{#if modules.known_results}} a known result,{{/if}} a write-up). -->
+
+## Progress log (newest last)
+
+- YYYY-MM-DD: started; <initial state>.

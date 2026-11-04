@@ -1,0 +1,11 @@
+## Long runs
+
+{{#if view.coordinator}}
+- **Before any run longer than about two minutes, load the `launch-preflight` skill**: a fresh verified build, a known-answer check, a unique output directory, a resource limit, a heartbeat.
+{{#if harness.cap.background_callback}}
+- **Launch it as a background job the harness tracks** (`bin/bg-run`), or keep exactly one waiter (`bin/wait-until-done`); never a detached `nohup ... &`. Then end the turn and resume on the completion notice.
+{{else}}
+- **Run long jobs in the foreground to completion** (`bin/bg-run` adds a heartbeat). A job that may outlast the session is run as `bin/bg-run --runs runs/ --detach` (it outlives the session, recorded on disk); the next session checks it with `--status`.
+{{/if}}
+- **Exit 0 is not done**: check the deliverable itself. Details: [docs/discipline/launch.md](docs/discipline/launch.md).
+{{/if}}

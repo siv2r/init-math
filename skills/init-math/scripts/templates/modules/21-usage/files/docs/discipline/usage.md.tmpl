@@ -1,0 +1,93 @@
+# Usage statistics
+
+How much model work this project uses, split by model and by who did it (the main thread
+or a subagent, and which agent type). The numbers come from the harness's own session
+record; a hook copies the **counts** into the repository as the work happens, and
+`bin/usage-report` summarizes them. Use them when deciding which model plays which role,
+or whether a kind of work should be delegated: measured shares, not impressions.
+
+## What is recorded, and what never is
+
+At every end of turn (`Stop`), when a subagent finishes (`SubagentStop`){{#if harness.is_claude}} and when a session
+ends (`SessionEnd`){{/if}}, `hooks/usage-log.py` reads the part of the transcript written since its
+last run and appends rows to **`logs/usage.jsonl`**:
+
+| Field | Meaning |
+|---|---|
+| `kind` | `usage` (token counts) or `limits` (plan limits, below) |
+| `ts` | time of the last response counted in the row (UTC, from the transcript) |
+| `harness`, `session` | which harness, which session (a subagent carries its parent's session) |
+| `role`, `agent_type` | `main` or `subagent`; for a subagent, its agent type (e.g. `worker`) |
+| `model` | the model that answered |
+| `calls` | API responses counted in the row, each once |
+| `input` | input tokens not served from or written to the prompt cache |
+| `cache_read`, `cache_write` | input tokens served from, or written to, the cache |
+| `output` | output tokens, reasoning included |
+| `reasoning` | reasoning tokens where the harness reports them (inside `output`; never add) |
+| `peak_context` | the largest prompt of any one response in the row: how full the context was at that call (a maximum, not a sum; absent in rows written before it existed) |
+| `src`, `upto` | which transcript file, and how far into it (bytes) the row reaches |
+
+One row covers one transcript, model, role and UTC day for one run of the hook, so the
+log grows by a few rows per turn. A `limits` row (Codex only) records the latest
+`plan`, `primary_used_pct` / `secondary_used_pct` (share of the 5-hour and weekly windows
+used), their `*_window_min` and `*_resets_at`; it is written only when a value changed.
+
+**Never recorded:** message text, prompts, tool calls or their output, file contents,
+agent briefs or descriptions. The hook reads the token-count fields and the agent type and
+nothing else leaves the transcript.
+
+**Where it lives.** `logs/usage.jsonl` is **committed**: agents add it to each commit when it
+changed, as {{#if harness.coordinator_file}}{{harness.coordinator_file}}{{else}}AGENTS.md{{/if}} asks (counts only, merged by union like
+the other logs). Only `logs/state/` is ignored by git: `usage-offsets.json` there remembers
+how far each transcript was read. If that file is lost, the hook falls back on the
+`src`/`upto` fields of the log, so nothing is counted twice.
+
+**If the format changes.** The harnesses do not publish their transcript format. When a
+transcript cannot be read (no token counts where they should be), the hook prints a
+`WARNING` once per transcript and adds one `usage-format-unknown` row to
+`logs/failures.jsonl`{{#if modules.reflect}}, where the next reflection pass will see it{{/if}}. It never blocks or
+stops the work: on any error it exits 0 and says so on stderr. The harness usually does not
+show that warning, so `bin/usage-report` repeats it above its totals ("N session record(s)
+could not be read since <date>; see logs/failures.jsonl"): those sessions' tokens are
+missing from the report.
+
+## Reading it
+
+```
+bin/usage-report                      # totals by model and by role, main vs subagent share
+bin/usage-report --by week            # model | role | day | week | session
+bin/usage-report --since 2026-01-01   # only from that UTC day on
+bin/usage-report --json               # for a script or a plot
+bin/usage-report --backfill           # first import sessions the hook did not see
+```
+
+- **By role** labels each row with the tier its model belongs to (`[strong]`, `[worker]`,
+  or `[other]`), matched against `[tiers]` in `project.toml`.
+- **Main vs subagent share of output tokens**: output is what an agent writes. There is
+  no target share: planning, proofs and anything written to the record belong on the main,
+  strong model. A large main share is worth a look only when it comes from mechanical work
+  the main thread did itself (long edits, routine computations) that a cheaper subagent
+  could do.
+- **Plan limits** (Codex) show how close the subscription windows are to full.
+- **Cost.** With `[usage.prices]` in `project.toml` empty (the default) the report shows
+  tokens only. Fill in your own per-model rates (US dollars per million tokens; the
+  comment there shows the shape) for an estimate. On a flat-rate subscription the
+  estimate measures relative weight, not money charged.
+
+**Backfill** imports from the harness's store:
+{{#if harness.is_claude}}`~/.claude/projects/<this project's path, with every non-alphanumeric character as "-">/`
+(that naming is the harness's, observed rather than documented). Claude Code deletes
+transcripts older than `cleanupPeriodDays` (default 30), so anything older is gone; run a
+backfill soon after setting this module up if you want the earlier weeks.{{else}}`~/.codex/sessions/`, every rollout whose recorded working directory is this
+project (or inside it).{{/if}} `--transcripts DIR` reads every `*.jsonl` under `DIR` instead,
+in either harness's format. Rows already logged are skipped (by file name and offset), so a
+backfill can be run any number of times.
+
+## Switching it off
+
+- For one session or command: `USAGE_LOG_OFF=1` in the environment. `HOOKS_QUIET=1` does
+  **not** apply: it silences nudges, and this hook never nudges.
+- For good: remove the module (its hook registrations, `hooks/usage-log.py`,
+  `hooks/_usage.py`, `bin/usage-report` and this doc), or delete the hook entries from the
+  harness's hook configuration. Delete `logs/usage.jsonl` too if you do not want the
+  history kept.

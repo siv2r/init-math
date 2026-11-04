@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""define-check: flag invented codes and notation used without a definition.
+
+Lists tokens that look like private shorthand (finding codes such as F12 or SB2, compound
+subscript names such as n_max, bracket operators, acronyms) and are neither defined in the
+document nor a GLOSSARY.md headword. Run it on a document before a reviewer or a reader
+sees it. It does NOT catch invented plain-word jargon; that needs a cold read.
+See docs/discipline/scans.md.
+
+Exit 0 (advisory) unless --strict and something is undefined. Allowed tokens: project.toml
+[scans] define_ok = [...], plus the words of the owner's [stack] tools. Canonical ids (C001, Q001, answer shapes such as A1) are never
+flagged, nor is anything inside an HTML comment. An all-caps word of a GLOSSARY.md headword
+(NEED in NEED-DIRECTION) counts as defined.
+
+selftest: yes
+usage: bin/define-check [--codes-only] [--porcelain] [--strict] <file> [file ...] | --selftest
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+PATTERNS = {
+    # agent-invented finding codes: F-Q, F10, SB1, R12, C003b, C003b-D (not canonical C003)
+    "finding-code": re.compile(
+        r"\b(?:[A-Z]{1,3}-[A-Z][A-Za-z0-9]*|[A-Z]{2,3}\d+[a-z]?|[A-Z]\d{2,}[a-z]?|[CQ]\d{3}[a-z](?:-[A-Za-z0-9]+)?)\b"),
+    # a single capital and one digit (M3, F2): could be a code or standard notation (S3, E8)
+    "short-code": re.compile(r"\b[A-Z]\d[a-z]?\b"),
+    # compound subscript names: n_max, dim_K (not a_n)
+    "subscript-id": re.compile(r"(?<![\\\w])(?:[A-Za-z]{2,6}_[A-Za-z0-9{}]+|[A-Za-z]_[A-Za-z]{2,}\w*)\b"),
+    # bracket operators glued to a following symbol: [2pt]p, [x^j]_k
+    "bracket-op": re.compile(r"\[[^\]\n]{1,14}\][_^A-Za-z0-9]"),
+    "acronym": re.compile(r"\b(?:[A-Z]{2,5}|[A-Z][A-Z0-9]{1,4})\b"),
+}
+CODE_CLASSES = ("finding-code",)
+# Project ids (C001, Q001) and standard public identifiers: OEIS A-numbers, MathSciNet MR numbers.
+# Answer shapes of a research question (Q002 / A1) are project ids too.
+CANONICAL = re.compile(r"^(?:[CQ]\d{3}|A\d{1,2}|A\d{6}|MR\d{5,8})$")
+ACRONYM_OK = {
+    "GCD", "LCM", "WLOG", "IFF", "LHS", "RHS", "QED", "PID", "UFD", "DVR", "ODE", "PDE",
+    "GL", "SL", "SO", "SU", "PGL", "PSL", "CW", "FFT", "LLL", "SAT", "SMT", "DAG", "BFS",
+    "DFS", "OEIS", "MSC", "DOI", "ISBN", "PDF", "HTML", "JSON", "TOML", "TSV", "CSV", "URL",
+    "API", "CLI", "CPU", "RAM", "GPU", "TODO", "NB", "OK", "ID", "OS", "CI", "AI", "LLM",
+    "II", "III", "IV", "VI", "VII", "VIII", "IX", "XI", "XII", "README", "AGENTS",
+    "GLOSSARY", "SKILL", "TEMPLATE", "SOUND", "CLEAN", "REFUTED", "SURVIVED", "NARROWED",
+    "INCONCLUSIVE", "OVER", "CLAIMED", "UNSUPPORTED", "INCONSISTENT", "NEEDS", "WORK", "NEW",
+    "CRUX", "UNVERIFIED", "SUSPECT", "COMPUTATION", "AUTO", "ASK", "DONE", "PARTIAL",
+    "DIRECTION", "TIED", "WEAK", "UTC", "ARGUED", "GAPS", "PROVED", "COUNTEREXAMPLE",
+    # capitalized for emphasis in prose
+    "NOT", "NO", "NEVER", "ONLY", "ALL", "ANY", "AND", "OR", "MUST",
+    # words this project's own tools print or its agents return as verdicts
+    "PASS", "FAIL", "WARN", "START", "END", "STALL", "TOPIC", "MATCH", "SELF", "CONTAINED",
+    "READER", "READY", "HERE", "JSONL", "UTF", "LSP",
+}
+INLINE_CODE = re.compile(r"`[^`]*`")
+MD_LINK = re.compile(r"\[([^\]\n]*)\]\([^)\n]*\)")
+MD_REF = re.compile(r"\[([^\]\n]*)\]\[[^\]\n]*\]")
+WIKILINK = re.compile(r"\[\[[^\]\n]*\]\]")
+FENCE = re.compile(r"^\s*(```|~~~)")
+COMMENT = re.compile(r"<!--.*?-->", re.S)
+ORDER = {"finding-code": 0, "short-code": 1, "bracket-op": 2, "subscript-id": 3, "acronym": 4}
+
+
+def settings(root: Path) -> set[str]:
+    try:
+        cfg = tomllib.loads((root / "project.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return set()
+    ok = set(map(str, cfg.get("scans", {}).get("define_ok", []) or []))
+    # The owner's own tools ([stack] tools, e.g. "PARI/GP") are names, not jargon.
+    for tool in cfg.get("stack", {}).get("tools", []) or []:
+        ok.update(w for w in re.split(r"[^A-Za-z0-9_]+", str(tool)) if w)
+    return ok
+
+
+def glossary_terms(root: Path) -> set[str]:
+    terms: set[str] = set()
+    try:
+        lines = (root / "GLOSSARY.md").read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return terms
+    for line in lines:
+        m = re.match(r"\s*[-*]\s*\*\*(.+?)\*\*", line) or re.match(r"\s*#+\s*(.+)", line)
+        if not m:
+            continue
+        head = m.group(1).strip().lower()
+        terms.add(head)
+        for part in re.split(r"[/(),]|\s+or\s+", head):
+            part = part.strip(" `")
+            if part:
+                terms.add(part)
+        terms.update(w.lower() for w in re.findall(r"\b[A-Z]{2,}\b", m.group(1)))
+        terms.update(t.lower() for t in re.findall(r"`([^`]+)`", m.group(1)))
+    return terms
+
+
+def is_defined(tok: str, full: str, glossary: set[str]) -> bool:
+    if tok.lower() in glossary:
+        return True
+    t = re.escape(tok)
+    strong = [
+        rf"\*\*\s*{t}\s*\*\*",
+        rf"(?<![\w]){t}\s*(?::=|=(?!=))",
+        rf"(?<![\w]){t}\s+(?:denotes?|means|is defined|is the|stands for)",
+        rf"(?:where|let|denote|define[sd]?|call)\s+{t}\b",
+        rf"(?<![\w]){t}\s*\((?:the |i\.e\.|=|short for)",
+    ]
+    return any(re.search(p, full) for p in strong)
+
+
+def clean_lines(text: str) -> list[str]:
+    out, fence = [], False
+    text = COMMENT.sub(lambda c: "\n" * c.group(0).count("\n"), text)  # keep line numbers
+    for ln in text.splitlines():
+        if FENCE.match(ln):
+            fence = not fence
+            out.append("")
+            continue
+        if fence:
+            out.append("")
+            continue
+        ln = INLINE_CODE.sub(" ", ln)
+        ln = WIKILINK.sub(" ", ln)
+        ln = MD_LINK.sub(r" \1 ", ln)
+        ln = MD_REF.sub(r" \1 ", ln)
+        out.append(ln)
+    return out
+
+
+def scan(text: str, glossary: set[str], ok: set[str], codes_only: bool) -> list[tuple[str, int, str]]:
+    lines = clean_lines(text)
+    full = "\n".join(lines)
+    seen: set[str] = set()
+    undefined = []
+    for cls, pat in PATTERNS.items():
+        if codes_only and cls not in CODE_CLASSES:
+            continue
+        for i, ln in enumerate(lines, 1):
+            for m in pat.finditer(ln):
+                tok = m.group(0)
+                if tok in seen or tok in ok or CANONICAL.match(tok):
+                    continue
+                if cls == "acronym" and tok in ACRONYM_OK:
+                    continue
+                seen.add(tok)
+                if not is_defined(tok, full, glossary):
+                    undefined.append((cls, i, tok))
+    return sorted(undefined, key=lambda u: (ORDER[u[0]], u[1]))
+
+
+def selftest() -> int:
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        (root / "GLOSSARY.md").write_text("## Terms\n\n- **n_max**: the largest index tried.\n"
+                                          "- **DONE / NEED-DIRECTION**: how a worker ends.\n")
+        (root / "project.toml").write_text('[scans]\ndefine_ok = ["E8"]\n[stack]\ntools = ["PARI/GP"]\n')
+        doc = ("# Notes on C001\n\nFinding F7 shows n_max grows. SB2 grew too.\nRun AB is the baseline.\n"
+               "Let KX denote the kernel. E8 and the PQR are here.\n`ZZ9` is code.\n"
+               "<!-- fixture: BAD T6\n  XYZ -->\nAnswer shape A2 of Q002; the worker said NEED.\nWe use PARI/GP and NOT Magma.\n")
+        got = scan(doc, glossary_terms(root), settings(root), codes_only=False)
+        toks = {t for _, _, t in got}
+        if toks != {"F7", "SB2", "PQR"}:
+            print(f"selftest FAIL (full): {sorted(toks)}")
+            return 1
+        got = scan(doc, glossary_terms(root), settings(root), codes_only=True)
+        if {t for _, _, t in got} != {"SB2"}:
+            print(f"selftest FAIL (codes-only): {got}")
+            return 1
+    print("define-check selftest: ok")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("files", nargs="*")
+    ap.add_argument("--codes-only", action="store_true", help="only invented finding codes")
+    ap.add_argument("--porcelain", action="store_true", help="one 'path<TAB>line<TAB>class<TAB>token' per hit")
+    ap.add_argument("--strict", action="store_true", help="exit 1 if anything is undefined")
+    ap.add_argument("--selftest", action="store_true")
+    a = ap.parse_args(argv)
+    if a.selftest:
+        return selftest()
+    glossary, ok = glossary_terms(ROOT), settings(ROOT)
+    sources = [(f, None) for f in a.files] or [("<stdin>", sys.stdin.read())]
+    total = 0
+    for name, text in sources:
+        if text is None:
+            try:
+                text = Path(name).read_text(encoding="utf-8", errors="replace")
+            except OSError as e:
+                print(f"define-check: cannot read {name}: {e}", file=sys.stderr)
+                continue
+        hits = scan(text, glossary, ok, a.codes_only)
+        total += len(hits)
+        if a.porcelain:
+            for cls, ln, tok in hits:
+                print(f"{name}\t{ln}\t{cls}\t{tok}")
+            continue
+        if not hits:
+            print(f"{name}: no undefined codes or notation.")
+            continue
+        print(f"{name}: {len(hits)} token(s) with no definition in the document and not in GLOSSARY.md.")
+        print("  Define each at first use, link its glossary entry, or add it to [scans] define_ok if standard:")
+        for cls, ln, tok in hits:
+            print(f"    [{cls:12}] L{ln}: {tok}")
+    if not a.porcelain and total:
+        print("define-check checks codes and notation only; invented plain words need a cold read.")
+    return 1 if (a.strict and total) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

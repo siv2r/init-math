@@ -1,0 +1,79 @@
+# <slug>: <the claim this experiment tests, in one line>
+
+purpose: test   # test: a claim, the full workflow | explore: looking for structure (smoke runs only)
+
+<!-- Copy this directory to experiments/<slug>/ and fill every section. Lines starting
+     with _( are placeholders. Procedure: experiments/WORKFLOW.md. -->
+
+## Prior art
+
+_(What is already known: the theorem, table, paper or earlier experiment that covers this, with a precise locator. If nothing was found, say "none found" and list what you searched.)_
+
+{{#if modules.questions}}
+## Question tie
+
+<!-- Q = a research question file in wiki/questions/; A<n> = a numbered answer shape in that
+     file; C = a conjecture id. kind, bridge and consumer: see docs/discipline/question-ties.md. -->
+question: Q000 / A1
+via: C000
+kind: decides | narrows | mechanism | instruments | transfer   (definitions: docs/discipline/question-ties.md)
+outcomes:
+- if <outcome> → <what changes in the answer>
+- if <failure outcome> → <what changes>
+bridge: (transfer only) if … then … because <mechanism>   (see docs/discipline/question-ties.md)
+consumer: (instruments only) C002 @residue | experiments/<slug>   (see docs/discipline/question-ties.md)
+
+{{/if}}
+## Goal
+
+_(The statement tested, the family it is about, and what a PASS, a FAIL and an
+INCONCLUSIVE would each mean.)_
+
+## Prediction
+
+_(Written before the full run, not reconstructed after: the outcome you expect and how
+likely (likely / even / unlikely), and which outcome would count as support.)_
+
+## Method
+
+{{#if has.example_driver}}
+The driver is `driver.py` (Python), a working example of the contract: replace its
+computation with yours. To use another tool for one experiment, write `driver.<ext>` in it
+and set `driver =` and `run_cmd =` in `run.toml`.
+{{else}}
+This project's drivers are `{{stack.driver}}`, run by `{{stack.run_cmd}}` (project.toml).
+`driver.py` here is a Python example of the contract only: write `{{stack.driver}}` in your
+tool to the same contract, then delete `driver.py`.
+{{/if}}
+
+- **Family and ranges:** _(the objects and parameter ranges for each tier)_
+- **Hard corners (smoke):** _(the smallest, degenerate and boundary cases, and one at the
+  largest size)_
+- **Known-answer check:** _(a case whose answer is known independently, and its source)_
+- **Checker attacked:** _(if a scorer or numerical check decides the verdict: does it test the
+  whole claim, is its arithmetic exact, and the command and output of one degenerate input)_
+- **Equivalence:** _(cases that are the same up to symmetry or isomorphism, counted once)_
+- **Coverage floor:** _(the share of intended cases that must complete)_
+- **Finite-data estimates:** _(each one computed at two sizes, L and 2L)_
+
+## Reproduce
+
+```
+bin/exp-run <slug> --smoke
+bin/exp-run <slug> --full
+```
+
+## Runs
+
+| Bundle | Tier | Watchdog | Verdict | Analysis |
+|---|---|---|---|---|
+
+## Findings
+
+_(Filled from the analyses, with the scope each one covers. For a structure that emerged
+(a closed form, a recurrence, a pattern): what it may be known as, and what a search under
+those names found.)_
+
+## Surprise
+
+_(After the run: what differed from the prediction, and what that changes; or "none".)_

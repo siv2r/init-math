@@ -1,0 +1,15 @@
+## Reflection loop
+
+- **friction**: anything in the way the work went that wasted effort or went wrong — a failed or repeated step, a wrong assumption, a misleading doc. Logged one line per event in `logs/friction.jsonl`. A false conjecture is a research result, not friction.
+- **feedback**: the owner's reaction to how the work was done — a correction, praise, or a gate bypass — logged in `logs/feedback.jsonl`.
+- **research command**: a program listed in `project.toml` `[stack] research_commands`; only these are watched for failures.
+- **failure signature**: a label for a kind of failure, either a pattern from `[[stack.failure_signatures]]` that matched the output, or `<program>-exit-nonzero`. Recurrence is counted per signature.
+- **hook**: a small script in `hooks/` that the harness runs automatically at a fixed moment (before or after a command, at the end of a turn).
+- **nudge**: a hook response that does not forbid anything for good. Either it refuses a tool call once with a reason, and the identical call re-issued proceeds (used where the call is usually a mistake but sometimes right), or, at the end of a turn, it reminds the agent of something (for example to log friction). The safety guard's hard blocks are not nudges. `HOOKS_QUIET=1` silences all nudges.
+- **workflow journal**: `notes/workflow-journal.md`, prose notes on how the work is going and the record of each reflection pass.
+- **reflection pass**: a periodic review (the `reflect` skill) of everything logged since the last review, ending in a few small workflow fixes.
+- **reviewed marker**: the line `<!-- reviewed YYYY-MM-DD -->` in the journal, and the matching per-row review state kept by `bin/journal` in `logs/state/`; together they say what a pass has already read.
+- **AUTO / ASK**: the two routes for a reflection fix. AUTO fixes (small, additive, tested, revertible) are applied in the pass; ASK fixes are proposed and wait for the owner. Rules in `notes/reflect-autonomy-heuristics.md`.
+- **`[auto-applied]`**: the journal tag (with the commit prefix `chore(reflect auto):`) on a fix applied without asking, so AUTO routing can be audited later.
+- **ladder**: the order in which a fix escalates — prose, then a nudge, then a hard check — climbing one rung only when the previous one demonstrably did not hold.
+- **proposal queue**: `logs/proposals.jsonl`, the changes waiting for the owner's yes or no (`bin/journal --propose` queues one, `--pending` lists them, `--decide` records the answer). A proposal stays pending until the owner answers; a "continue" is not an answer.

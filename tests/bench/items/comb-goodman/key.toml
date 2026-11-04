@@ -1,0 +1,10 @@
+# Control (a known counting bound; the proof counts mixed angles). Each non-monochromatic
+# triangle has exactly two mixed angles; each angle lies in one triangle; r b <= (n-1)^2/4 by
+# AM-GM. Algebra: 4(n-2) - 3(n-1) = n - 5. Brute force over all 2-colourings of K_n for
+# n = 3..7: minimum monochromatic triangle counts 0, 0, 0, 2, 4, each >= the bound
+# (-1/2, -1/2, 0, 5/4, 7/2); the n = 6 and n = 7 remarks match these minima.
+kind = "control"
+error_class = ""
+location = ""
+catch = ""
+audited = "2026-10-28, Claude Fable 5.1: control; mixed-angle count (exactly two per non-monochromatic triangle) and the algebra re-derived; brute force over all 2-colourings of K_3..K_7 gives minima 0,0,0,2,4 matching the bound"

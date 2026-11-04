@@ -1,0 +1,12 @@
+[usage]
+# Your own rates, in US dollars per million tokens, so bin/usage-report can estimate cost.
+# Empty by default: the report then shows tokens only. Rates change and differ by plan, so
+# fill in what YOU pay, one table per model; a key matches every model whose name contains
+# it (the longest matching key wins). For example:
+#   [usage.prices."model-name"]
+#   input = 0.0          # uncached input
+#   output = 0.0         # output, reasoning included
+#   cache_read = 0.0
+#   cache_write = 0.0
+# On a flat-rate subscription, prices measure relative weight, not money you were charged.
+[usage.prices]

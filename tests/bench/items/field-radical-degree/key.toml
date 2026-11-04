@@ -1,0 +1,10 @@
+kind = "flawed"
+error_class = "dropped case: d = 2, where the d-th root of unity -1 is real"
+location = "the step 'As F is real, ζ_d is real, which forces d = 1.'"
+catch = "says that ζ_d is real also for d = 2 (ζ_2 = -1), so the argument only gives d in {1, 2} and does not exclude F = Q(sqrt 2); ideally notes that this happens exactly when sqrt 2 lies in Q(ζ_n), i.e. when 8 divides n, and gives the counterexample n = 8: the splitting field Q(2^(1/8), i) has degree 16, not 8·φ(8) = 32"
+audited = "2026-10-28, Claude Fable 5.1: Sage: degree of the splitting field of x^n - 2 equals n phi(n) for n <= 16 except n = 8 (16) and n = 16 (64); every other step re-derived; D&F references checked; catch line tightened (8 | n characterization moved behind ideally)"
+# The statement is FALSE; the smallest counterexample is n = 8 (it holds for n = 1..7).
+# Verified in Sage by factoring y^n - 2 over CyclotomicField(n), n = 1..16: the degree
+# phi(n) * (degree of an irreducible factor) equals n*phi(n) except n = 8 (16 vs 32) and
+# n = 16 (64 vs 128). For n = 8: ζ_8 + ζ_8^(-1) = sqrt 2 = α^4, so F = Q(sqrt 2), d = 2.
+# All other steps (compositum formula, F Galois and real, F = Q(2^(1/d))) are correct.

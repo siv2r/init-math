@@ -1,0 +1,12 @@
+id = "program_review"
+number = 19
+title = "Program review"
+group = "E"
+status = "included"
+order = 190
+summary = "An occasional, owner-attended review of whether the research as a whole is moving toward the owner's written goals, with evidence-cited findings and a check that workflow changes were actually used."
+depends = []
+
+[[hooks]]
+script = "hooks/program-review-nudge.py"
+event = "Stop"

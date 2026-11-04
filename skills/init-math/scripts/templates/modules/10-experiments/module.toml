@@ -1,0 +1,9 @@
+id = "experiments"
+number = 10
+title = "Experiments"
+group = "C"
+status = "included"
+order = 100
+summary = "Experiments as reproducible run bundles: a driver contract, bin/exp-run with a memory/time watchdog, cold analysis, and the experiment doctrine (breadth first, smoke on hard corners, honest checks)."
+off_in_presets = ["theory-only"]
+allow_commands = ["bin/exp-pending"]  # pre-approved: checks and records only

@@ -1,0 +1,436 @@
+#!/usr/bin/env python3
+"""How much each registered principle is being used, and where it was called for but not used.
+
+selftest: yes
+
+Principles (docs/principles.toml) are not enforced by anything. Agents record a use where the
+work is recorded, as `@principle:<id> — <what it produced>`, and a deliberate skip, when they
+give a reason anyway, as `@principle-skipped:<id> — <why>`. This report counts those lines
+over a window, and counts the situations that call for each principle where they can be
+counted. Read it at program review (docs/discipline/attempt-loop.md). Moves (entries with
+kind = "move") are listed separately: a use is a line of attack that chose the move
+(`moves:` in its record) or a citation.
+
+Usage:
+  bin/principle-usage                 the report (window: since the last program review, or 30 days)
+  bin/principle-usage --since DATE    the report from DATE (YYYY-MM-DD)
+  bin/principle-usage --json          the same as JSON
+  bin/principle-usage --sample N [--seed S]
+                                      N recorded uses to spot-check, chosen reproducibly
+  bin/principle-usage --check         lint the registry (ids, fields, trigger values)
+  bin/principle-usage --root DIR      read the project at DIR (default: this script's project)
+  bin/principle-usage --selftest
+
+Verdicts:
+  used                  recorded uses in the window
+  considered, skipped   no use, but a stated reason for skipping it
+  trigger seen, unused  the situation came up and nobody recorded the principle: a wiring gap
+  never triggered       the situation did not come up
+  not measurable        the situation cannot be counted (trigger = false)
+  no data yet           registered after the window opened, with nothing seen since
+
+Skill loads: for a principle carried by a skill (`skill =` in the registry), the report
+counts that skill's loads in the window from logs/skills.jsonl (Claude Code only; the column
+shows `—` on Codex, where a skill load is not a tool call a hook can see). A trigger seen
+with the skill never loaded is the clearest wiring gap.
+
+A recorded use is what an agent wrote down, not proof the principle was followed: spot-check
+a sample. "No citation" can also mean "used but not recorded".
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import json
+import random
+import re
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+CITE = re.compile(r"@principle:([a-z0-9-]+)\s+(?:—|--|-)\s*(.*?)\s*$")
+SKIP = re.compile(r"@principle-skipped:([a-z0-9-]+)\s+(?:—|--|-)\s*(.*?)\s*$")
+BARE = re.compile(r"@principle(?:-skipped)?:([a-z0-9-]+)(?!\s+(?:—|--|-)\s*\S)")
+DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+PLACEHOLDERS = {"", "n/a", "na", "done", "ok", "-", "—", "tbd", "todo", "<what it produced>", "<why>"}
+FIELDS = ("says", "reason", "defeater", "home", "trigger", "recorded")
+TRIGGERS = re.compile(r"^(attempts\.(audit_due|budget_reached|new|set_aside)|conjectures\.new|"
+                      r"conjectures\.status:[a-z-]+|nudge:[a-z0-9-]+)$")
+
+
+def load_toml(p: Path) -> dict:
+    try:
+        with open(p, "rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def config(root: Path) -> dict:
+    cfg = load_toml(root / "project.toml")
+    return {"attempts": cfg.get("attempts", {}).get("dir", "wiki/attempts"),
+            "registry": cfg.get("attempts", {}).get("registry", "docs/principles.toml"),
+            "questions": cfg.get("questions", {}).get("dir", "wiki/questions"),
+            "conjectures": cfg.get("conjectures", {}).get("dir", "wiki/conjectures")}
+
+
+def git(root: Path, *args: str) -> str | None:
+    try:
+        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def file_date(root: Path, p: Path) -> str:
+    out = git(root, "log", "-1", "--format=%cs", "--", str(p.relative_to(root)))
+    return (out or "").strip() or datetime.date.today().isoformat()
+
+
+def default_since(root: Path) -> str:
+    p = root / "notes/program-reviews.md"
+    if p.is_file():
+        heads = re.findall(r"^## (\d{4}-\d{2}-\d{2})", p.read_text(encoding="utf-8"), re.M)
+        if heads:
+            return max(heads)
+    return (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
+
+
+def sources(root: Path, cfg: dict) -> list[Path]:
+    out: list[Path] = []
+    for d in (cfg["attempts"], cfg["questions"], cfg["conjectures"]):
+        if (root / d).is_dir():
+            out += sorted(p for p in (root / d).glob("*.md") if not p.name.startswith(("TEMPLATE", "_")))
+    out += sorted((root / "work").glob("*/README.md")) if (root / "work").is_dir() else []
+    j = root / "notes/workflow-journal.md"
+    if j.is_file():
+        out.append(j)
+    return [p for p in out if "TEMPLATE" not in p.parts]
+
+
+def citations(root: Path, cfg: dict) -> list[dict]:
+    """Every citation line, dated by the date on its own line, else the file's last commit."""
+    out = []
+    for p in sources(root, cfg):
+        fallback = None
+        for n, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if "@principle" not in line:
+                continue
+            m = DATE.search(line)
+            if m:
+                date = m.group(1)
+            else:
+                fallback = fallback or file_date(root, p)
+                date = fallback
+            where = f"{p.relative_to(root).as_posix()}:{n}"
+            for rx, kind in ((CITE, "use"), (SKIP, "skip")):
+                for c in rx.finditer(line):
+                    good = c.group(2).strip().lower() not in PLACEHOLDERS
+                    out.append({"id": c.group(1), "kind": kind if good else "bare", "date": date,
+                                "where": where, "text": c.group(2).strip()})
+            for b in BARE.finditer(line):
+                out.append({"id": b.group(1), "kind": "bare", "date": date, "where": where, "text": ""})
+    return out
+
+
+def move_uses(root: Path, cfg: dict, since: str) -> dict[str, int]:
+    """move id -> lines of attack started in the window that chose it."""
+    out: dict[str, int] = {}
+    adir = root / cfg["attempts"]
+    for p in sorted(adir.glob("L*.md")) if adir.is_dir() else []:
+        text = p.read_text(encoding="utf-8")
+        m = re.search(r"^moves:\s*\[(.*)\]", text, re.M)
+        start = re.search(r"^- (\d{4}-\d{2}-\d{2}): status → active: started", text, re.M)
+        if m and start and start.group(1) >= since:
+            for mv in (x.strip() for x in m.group(1).split(",")):
+                if mv:
+                    out[mv] = out.get(mv, 0) + 1
+    return out
+
+
+def skill_loads(root: Path, since: str) -> dict[str, int] | None:
+    """skill name -> loads in the window, or None when this harness cannot record them."""
+    harness = load_toml(root / "project.toml").get("project", {}).get("harness", "")
+    if harness and harness != "claude":
+        return None
+    out: dict[str, int] = {}
+    p = root / "logs/skills.jsonl"
+    if p.is_file():
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict) and str(row.get("ts", ""))[:10] >= since and row.get("skill"):
+                out[row["skill"]] = out.get(row["skill"], 0) + 1
+    return out
+
+
+def registered(root: Path, cfg: dict, pid: str) -> str:
+    out = git(root, "log", "--reverse", "--format=%cs", "-S", f"[{pid}]", "--", cfg["registry"])
+    return out.splitlines()[0] if out and out.strip() else ""
+
+
+def trigger_count(root: Path, cfg: dict, trig, since: str) -> int | None:
+    if trig is False or not isinstance(trig, str):
+        return None
+    if trig.startswith("nudge:"):
+        hook, n = trig.split(":", 1)[1], 0
+        p = root / "logs/nudges.jsonl"
+        if p.is_file():
+            for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if row.get("hook") == hook and str(row.get("ts", ""))[:10] >= since:
+                    n += 1
+        return n
+    adir = root / cfg["attempts"]
+    if trig == "attempts.audit_due":
+        # times an audit was due: audits logged in the window, plus targets due now
+        n = sum(1 for c in citations(root, cfg) if c["id"] == "stall-audit" and c["kind"] == "use"
+                and c["date"] >= since)
+        out = subprocess.run([sys.executable, str(root / "bin/attempts"), "--root", str(root), "--gate"],
+                             capture_output=True, text=True, timeout=60) if (root / "bin/attempts").is_file() else None
+        return n + (out.stdout.count("AUDIT DUE") if out else 0)
+    if trig == "attempts.budget_reached":
+        # times a budget ran out: decisions logged in the window, plus lines at their budget now
+        n = sum(1 for c in citations(root, cfg) if c["id"] == "budget-review" and c["kind"] == "use"
+                and c["date"] >= since)
+        out = subprocess.run([sys.executable, str(root / "bin/attempts"), "--root", str(root), "--gate"],
+                             capture_output=True, text=True, timeout=60) if (root / "bin/attempts").is_file() else None
+        return n + (out.stdout.count("BUDGET REACHED") if out else 0)
+    if trig in ("attempts.new", "attempts.set_aside"):
+        word = "status → active: started" if trig == "attempts.new" else "status → set-aside"
+        n = 0
+        if adir.is_dir():
+            for p in adir.glob("L*.md"):
+                for line in p.read_text(encoding="utf-8").splitlines():
+                    m = re.match(r"^- (\d{4}-\d{2}-\d{2}): (.*)$", line)
+                    if m and m.group(1) >= since and m.group(2).startswith(word):
+                        n += 1
+        return n
+    if trig.startswith("conjectures."):
+        rel = cfg["conjectures"]
+        if trig == "conjectures.new":
+            out = git(root, "log", f"--since={since}", "--diff-filter=A", "--name-only", "--format=", "--", rel)
+            return None if out is None else len({ln for ln in out.splitlines()
+                                                 if re.search(r"/C\d{3}-[^/]+\.md$", ln)})
+        value = trig.split(":", 1)[1]
+        out = git(root, "log", f"--since={since}", "-p", "--format=", "--", rel)
+        return None if out is None else len(re.findall(rf"^\+status:\s*{re.escape(value)}\b", out, re.M))
+    return None
+
+
+def report_rows(root: Path, since: str) -> list[dict]:
+    cfg = config(root)
+    reg = load_toml(root / cfg["registry"])
+    cites = [c for c in citations(root, cfg) if c["date"] >= since]
+    chosen = move_uses(root, cfg, since)
+    loads = skill_loads(root, since)
+    rows = []
+    for pid in sorted(reg):
+        entry = reg[pid] if isinstance(reg[pid], dict) else {}
+        if entry.get("on") is False:
+            continue
+        mine = [c for c in cites if c["id"] == pid]
+        kind = "move" if entry.get("kind") == "move" else "principle"
+        uses = sum(c["kind"] == "use" for c in mine) + (chosen.get(pid, 0) if kind == "move" else 0)
+        skips = sum(c["kind"] == "skip" for c in mine)
+        bare = sum(c["kind"] == "bare" for c in mine)
+        seen = trigger_count(root, cfg, entry.get("trigger", False), since)
+        reg_date = registered(root, cfg, pid)
+        if reg_date and reg_date > since and not (uses or skips or seen):
+            # registered inside the window and nothing seen since: too early to read anything
+            verdict = "no data yet"
+        elif uses:
+            verdict = "used"
+        elif skips:
+            verdict = "considered, skipped"
+        elif seen is None:
+            verdict = "not measurable"
+        elif seen:
+            verdict = "trigger seen, unused"
+        else:
+            verdict = "never triggered"
+        sk = entry.get("skill") or ""
+        rows.append({"id": pid, "kind": kind, "skill": sk or None,
+                     "skill_loads": (loads.get(sk, 0) if loads is not None else None) if sk else None,
+                     "uses": uses, "skipped": skips, "bare": bare,
+                     "trigger_seen": seen, "registered": reg_date or None, "verdict": verdict})
+    return rows
+
+
+def print_report(root: Path, since: str, as_json: bool, out=print) -> int:
+    rows = report_rows(root, since)
+    if as_json:
+        out(json.dumps({"since": since, "rows": rows}, indent=2, sort_keys=True))
+        return 0
+    out(f"Principle usage since {since}. A recorded use is what an agent wrote down, not proof the")
+    out("principle was followed (spot-check with --sample); no citation can also mean unrecorded use.")
+    if not rows:
+        out("no registered principles (docs/principles.toml)")
+        return 0
+    w = max(len(r["id"]) for r in rows)
+    for kind in ("principle", "move"):
+        mine = [r for r in rows if r["kind"] == kind]
+        if not mine:
+            continue
+        out(f"{kind:<{w}}  uses  skipped  bare  trigger  loads  verdict")
+        for r in mine:
+            trig = "—" if r["trigger_seen"] is None else str(r["trigger_seen"])
+            ld = "—" if r["skill_loads"] is None else str(r["skill_loads"])
+            out(f"{r['id']:<{w}}  {r['uses']:>4}  {r['skipped']:>7}  {r['bare']:>4}  {trig:>7}  {ld:>5}  {r['verdict']}")
+    return 0
+
+
+def sample(root: Path, since: str, n: int, seed: str, out=print) -> int:
+    pool = sorted((c for c in citations(root, config(root)) if c["kind"] == "use" and c["date"] >= since),
+                  key=lambda c: (c["where"], c["id"]))
+    pick = random.Random(seed).sample(pool, min(n, len(pool)))
+    if not pick:
+        out("no recorded uses in the window")
+    for c in sorted(pick, key=lambda c: c["where"]):
+        out(f"{c['where']}  @principle:{c['id']} — {c['text']}")
+    return 0
+
+
+def check(root: Path, out=print) -> int:
+    cfg = config(root)
+    p = root / cfg["registry"]
+    try:
+        with open(p, "rb") as f:
+            reg = tomllib.load(f)
+    except OSError:
+        out(f"no registry at {cfg['registry']}")
+        return 1
+    except tomllib.TOMLDecodeError as e:
+        out(f"{cfg['registry']}: not valid TOML: {e}")
+        return 1
+    problems = []
+    for pid, entry in sorted(reg.items()):
+        if not ID.match(pid):
+            problems.append(f"[{pid}]: an id is lowercase letters, digits and dashes")
+        if not isinstance(entry, dict):
+            problems.append(f"[{pid}]: not a table")
+            continue
+        for f in FIELDS:
+            if f not in entry or entry[f] in ("", None):
+                problems.append(f"[{pid}]: missing `{f}`")
+        t = entry.get("trigger")
+        if t is not False and not (isinstance(t, str) and TRIGGERS.match(t)):
+            problems.append(f"[{pid}]: trigger {t!r} is not one of the trigger values (or false)")
+        home = entry.get("home")
+        if isinstance(home, str) and home and not (root / home).is_file():
+            problems.append(f"[{pid}]: home {home} does not exist")
+    for x in problems:
+        out(x)
+    out(f"principle registry: {len(reg)} entries, {len(problems)} problem(s)")
+    return 1 if problems else 0
+
+
+def selftest() -> int:
+    failed = 0
+
+    def expect(label: str, cond: bool, detail: str = "") -> None:
+        nonlocal failed
+        print(f"{'ok  ' if cond else 'FAIL'} {label}" + (f": {detail}" if not cond and detail else ""))
+        failed += not cond
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "docs").mkdir()
+        (root / "docs/rules.md").write_text("x\n")
+        reg = ""
+        for pid, trig in (("used-one", "false"), ("skipped-one", "false"), ("gap-one", '"nudge:my-hook"'),
+                          ("quiet-one", '"nudge:other-hook"'), ("unmeasured", "false"),
+                          ("hidden", "false")):
+            reg += (f'[{pid}]\nsays = "s"\nreason = "r"\ndefeater = "d"\nhome = "docs/rules.md"\n'
+                    f'trigger = {trig}\nrecorded = "x"\non = {"false" if pid == "hidden" else "true"}\n\n')
+        reg += ('[skilled]\nsays = "s"\nreason = "r"\ndefeater = "d"\nhome = "docs/rules.md"\n'
+                'trigger = false\nrecorded = "x"\nskill = "attack"\non = true\n\n')
+        reg += ('[a-move]\nkind = "move"\nsays = "s"\nreason = "r"\ndefeater = "d"\nhome = "docs/rules.md"\n'
+                'trigger = false\nrecorded = "x"\non = true\n\n')
+        (root / "docs/principles.toml").write_text(reg)
+        (root / "wiki/attempts").mkdir(parents=True)
+        (root / "wiki/attempts/L002-y.md").write_text(
+            "---\nid: L002\nmoves: [a-move]\n---\n# L002: y\n## Log\n"
+            "- 2026-02-04: status → active: started\n")
+        (root / "wiki/attempts/L001-x.md").write_text(
+            "---\nid: L001\n---\n# L001: x\n## Log\n"
+            "- 2026-02-01: @principle:used-one — found the n=3 counterexample\n"
+            "- 2026-02-02: @principle-skipped:skipped-one — the statement is settled on its range\n"
+            "- 2026-02-03: @principle:unmeasured — n/a\n"
+            "- 2025-01-01: @principle:quiet-one — before the window\n")
+        (root / "logs").mkdir()
+        (root / "logs/skills.jsonl").write_text(
+            '{"skill": "attack", "ts": "2026-02-06T10:00:00"}\n{"skill": "attack", "ts": "2025-01-01T10:00:00"}\n')
+        (root / "logs/nudges.jsonl").write_text(
+            '{"hook": "my-hook", "ts": "2026-02-05T10:00:00"}\n{"hook": "my-hook", "ts": "2025-01-01T10:00:00"}\n')
+        rows = {r["id"]: r for r in report_rows(root, "2026-01-01")}
+        expect("a use with a clause is used", rows["used-one"]["verdict"] == "used", str(rows["used-one"]))
+        expect("a stated skip is considered, skipped", rows["skipped-one"]["verdict"] == "considered, skipped")
+        expect("a nudge in the window with no use is a wiring gap",
+               rows["gap-one"]["verdict"] == "trigger seen, unused" and rows["gap-one"]["trigger_seen"] == 1,
+               str(rows["gap-one"]))
+        expect("no nudge in the window is never triggered", rows["quiet-one"]["verdict"] == "never triggered",
+               str(rows["quiet-one"]))
+        expect("a placeholder clause counts as bare, not a use",
+               rows["unmeasured"]["uses"] == 0 and rows["unmeasured"]["bare"] == 1, str(rows["unmeasured"]))
+        expect("trigger = false is not measurable", rows["unmeasured"]["verdict"] == "not measurable")
+        expect("on = false hides a principle", "hidden" not in rows)
+        expect("skill loads in the window are counted for the principle's skill",
+               rows["skilled"]["skill_loads"] == 1 and rows["used-one"]["skill_loads"] is None,
+               str(rows["skilled"]))
+        (root / "project.toml").write_text('[project]\nharness = "codex"\n')
+        expect("on Codex skill loads are not measurable",
+               {r["id"]: r for r in report_rows(root, "2026-01-01")}["skilled"]["skill_loads"] is None)
+        (root / "project.toml").unlink()
+        expect("a line that chose a move is a use of it",
+               rows["a-move"]["uses"] == 1 and rows["a-move"]["kind"] == "move", str(rows["a-move"]))
+        lines: list[str] = []
+        sample(root, "2026-01-01", 5, "2026-03-01", lines.append)
+        expect("--sample lists recorded uses only", len(lines) == 1 and "used-one" in lines[0], str(lines))
+        lines = []
+        expect("--check passes a good registry", check(root, lines.append) == 0, str(lines))
+        (root / "docs/principles.toml").write_text(reg + '[Bad_Id]\nsays = "s"\ntrigger = "sometimes"\n')
+        lines = []
+        rc = check(root, lines.append)
+        text = "\n".join(lines)
+        expect("--check flags a bad id, missing fields and a bad trigger",
+               rc == 1 and "Bad_Id" in text and "missing `reason`" in text and "trigger 'sometimes'" in text, text)
+    print(f"principle-usage selftest: {failed} failed")
+    return 1 if failed else 0
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="bin/principle-usage", add_help=False)
+    ap.add_argument("-h", "--help", action="store_true")
+    ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--check", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--since")
+    ap.add_argument("--sample", type=int)
+    ap.add_argument("--seed", default="")
+    ap.add_argument("--root")
+    a = ap.parse_args(argv)
+    if a.help:
+        print(__doc__)
+        return 0
+    if a.selftest:
+        return selftest()
+    root = Path(a.root).resolve() if a.root else Path(__file__).resolve().parent.parent
+    if a.check:
+        return check(root)
+    since = a.since or default_since(root)
+    if a.sample:
+        return sample(root, since, a.sample, a.seed or since)
+    return print_report(root, since, a.json)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

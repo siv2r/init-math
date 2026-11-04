@@ -1,0 +1,11 @@
+{
+  "cwd": "/tmp/proj",
+  "hook_event_name": "Stop",
+  "last_assistant_message": "pong",
+  "model": "gpt-6-luna",
+  "permission_mode": "bypassPermissions",
+  "session_id": "01a11c59-386e-76e3-8954-062556212682",
+  "stop_hook_active": false,
+  "transcript_path": "/home/user/.codex/sessions/2026/10/08/rollout-2026-10-08T11-29-31-01a11c59-386e-76e3-8954-062556212682.jsonl",
+  "turn_id": "01a11c59-38f4-7962-8a4e-9b2252daaf11"
+}

@@ -1,0 +1,112 @@
+---
+name: new-conjecture
+description: Load when you are about to register a new conjecture in the ledger, or when a result suggests one. It states the conjecture as a connection between properties on a named family, chooses the research question(s) it serves with a one-sentence tie, writes the first falsification step, and files it.
+---
+
+# Register a conjecture
+
+Background and rules: `docs/discipline/conjecture-ledger.md`. The ledger is
+`wiki/conjectures/`; the format is `wiki/conjectures/TEMPLATE.md`.
+
+## 1. Check it is new, and that it is open
+
+- **Is this already known?** Ask it before anything else. If it is proved in the literature,
+  it is not a conjecture.
+{{#if modules.known_results}}
+  Record it in `wiki/known-results/` instead, with its citation, and stop here.
+{{else}}
+  Do not register it; note the citation in the file that prompted the thought.
+{{/if}}
+  If you can prove it yourself by a short argument, it is the project's own result: register
+  it all the same, write the proof as its evidence, and take it to `proved` by the
+  `gate-chain` skill, so the `proof-referee` reads the proof{{#if modules.known_results}} (the known-results catalog
+  holds only what others proved){{/if}}.
+- Read `wiki/conjectures/_index.md`, including `refuted` rows: a refuted conjecture with
+  the same statement and family means the answer is already known.
+{{#if modules.known_results}}
+- Check `wiki/known-results/`. If a published result only suggests it (a different family,
+  a weaker form), cite that as its origin. One that settles it is the case above: it goes in
+  known-results, not here.
+{{/if}}
+- If it is a sharper or wider version of an existing conjecture, add it to that file as a
+  `@residue:` line instead, unless it needs its own status.
+- **What is it known as?** If it came from a pattern (a closed form, a recurrence, an
+  algebraic or combinatorial structure), list candidate names for that structure and search
+  under each{{#if modules.firsthand}} (the literature search in `docs/discipline/firsthand-checks.md`){{/if}} before
+  treating it as new. A known name brings a literature with it.
+
+## 2. State it
+
+Write the statement as a connection between two properties of the same objects, on a named
+family: "for the objects in F, A holds exactly when B does" (or "only when", or "A
+determines B"). Put the family in `family:` (a parameter range, a class of objects, a named
+sequence) and keep the statement inside it.
+
+Examples of the shape (illustrations from several fields; yours will be in {{project.field}}):
+- Number theory: "For primes 5 <= l <= 31, p(l n + b) = 0 mod l for all n only when
+  24 b = 1 mod l."
+- Combinatorics: "For n <= 8, every cap set of maximum size in F_3^n is, up to affine maps,
+  a product of maximum caps in lower dimensions."
+- Geometry: "For point sets in general position with n <= 30, the maximum number of unit
+  distances is attained only by subsets of a lattice."
+
+A single-property statement is acceptable when the question asks for exactly that property
+(an exact value, a bound). If you think another shape fits better, say so to {{owner}} in
+plain mathematical terms and file it as {{owner}} decides (`docs/discipline/conjecture-ledger.md`).
+
+Write its `## Reading`: the other plausible readings and conventions, then the intended one
+and why. If you cannot tell which reading is meant, say so in your report.
+
+**Check it against the examples bank.** Run the statement against the `## Examples` of
+each question it will serve, breakers and outside probes first. If a bank example breaks it,
+either restate it or record it as refuted with that example: it never enters the ledger
+untested against what broke earlier claims. If you restate it, the first evidence entry of
+the restated conjecture names the original statement and the example that broke it, with a
+`repair:` line (monster-barring, exception or lemma-incorporation;
+`docs/discipline/informal-arguments.md`).
+
+## 3. Choose the question(s) and write the tie
+
+Run `bin/question-check --tsv` and read `wiki/questions/_index.md`. Pick the question(s)
+whose answer a verdict here would change, and write `question-tie:` as one sentence giving
+the consequence: "if true, answer shape A2 holds for this family; if refuted, A1 is ruled
+out". Being about the same objects is not a tie (see `docs/discipline/question-ties.md`).
+
+If no question fits, do not stretch a tie: propose a question with the `new-question`
+skill, and register the conjecture linking it (it stays parked until the owner activates
+that question).
+
+## 4. File it
+
+1. Copy `wiki/conjectures/TEMPLATE.md` to `wiki/conjectures/CNNN-<slug>.md` with the next
+   free number.
+2. `status: open`. Fill `questions:`, `question-tie:`, `family:` and the `# CNNN:` heading.
+3. Under `## Evidence`, note where the conjecture came from (a computation, a paper, a
+   pattern in other entries), dated.
+4. Under `## Next steps`, write at least one `@residue:` line: the cheapest way to break it.
+   Where small cases say little about it, a proof attempt or a reduction may come first,
+   with the cheap way to break it beside it (`docs/discipline/conjecture-ledger.md`).
+5. Add a row to the table in `wiki/conjectures/_index.md`.
+6. Run `bin/question-check` and fix every FAIL.
+7. Write your proposed `credence:` and `pursuit:` into the file, each with its date and
+   reason, ending `(proposed by an agent, <date>)`. {{owner}} confirms or changes them, which
+   removes the mark; mention them in your report.
+{{#if modules.attempts}}
+8. Read `bin/attempts --obstructions <Q>` for each question it serves. If the conjecture,
+   once settled, would remove a recorded obstruction, say so in that line's log
+   (`bin/attempts log <id> "<CNNN> would remove this obstruction if it holds"`).
+{{/if}}
+
+Never write `@priority`; that is {{owner}}'s. If you think it deserves priority, say so in
+your report, with the reason.
+
+## 5. Report
+
+{{#if harness.cap.ask_tool}}
+Tell {{owner}} the id, the statement, the question it serves and the first residue. A
+decision you need now (for example, a new question it depends on) can go through the
+structured ask tool; otherwise put it in your report.
+{{else}}
+Tell {{owner}}, in your report, the id, the statement, the question it serves and the first
+residue, and any new question it depends on.
+{{/if}}

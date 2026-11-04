@@ -1,0 +1,12 @@
+kind = "control"
+error_class = ""
+location = ""
+catch = ""
+audited = "2026-10-28, Claude Fable 5.1: control; parity, coprimality via 2 sqrt(-2) = -(sqrt -2)^3, units, cube expansion and b(3a^2-2b^2) = 1 all re-derived; brute force y < 100000 finds only y = 3"
+# CORRECT (Euler's equation, Fermat's claim; the classical argument, done carefully).
+# Checks: x even gives y^3 ≡ 2 mod 4, impossible; Z[sqrt -2] is norm-Euclidean, so a UFD
+# (unlike Z[sqrt -3], which is not the full ring of integers); units ±1 are cubes;
+# 2 sqrt(-2) = -(sqrt -2)^3 since (sqrt -2)^2 = -2; sqrt(-2) | x implies 2 | x^2;
+# (a + b sqrt -2)^3 = a^3 - 6ab^2 + (3a^2 b - 2b^3) sqrt -2; b(3a^2 - 2b^2) = 1 forces
+# b = 1, a = ±1, x = a^3 - 6a = ∓5, y = a^2 + 2b^2 = 3.
+# Brute force in Python: for 2 <= y < 100000 the only y with y^3 - 2 a square is y = 3 (x = 5).

@@ -1,0 +1,27 @@
+# To read: {{item.cite}}
+
+{{#if item.locator}}
+- **Locator:** {{item.locator}}
+{{else}}
+- **Locator:** (not given yet: a DOI, arXiv id, URL or library call number)
+{{/if}}
+{{#if item.why}}
+- **Why it is here:** {{item.why}}
+{{else}}
+- **Why it is here:** (not stated yet: which question or object it bears on)
+{{/if}}
+
+This is an inbox item: a source someone wants read, not yet ingested. Ingest it (the
+`ingest` skill) before experimenting off it.
+
+1. Put the source in `wiki/raw/`: the text, or a pointer file with the locator if it cannot
+   be committed. Never edit it afterwards.
+2. Read it, and write what matters to this project as an article in `wiki/concepts/`,
+   citing the raw file under `## Sources`. A reading list in `wiki/references/` may link it
+   too, but does not replace the article.
+{{#if modules.known_results}}
+3. File each result it proves about an object we study in `wiki/known-results/`, with the
+   theorem number and the date accessed.
+{{/if}}
+
+When done, add a line to `wiki/log.md` and delete this file.

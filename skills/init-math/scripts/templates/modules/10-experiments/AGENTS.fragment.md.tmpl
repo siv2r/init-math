@@ -1,0 +1,13 @@
+## Experiments
+
+{{#if view.shared}}
+- One experiment per `experiments/<slug>/` (copy `experiments/TEMPLATE/`). Fill its Prior art section before writing the driver.
+{{#if stack.run_cmd}}
+- This project's tools: {{#each stack.tools}}{{.}}{{#if !@last}}, {{/if}}{{/each}}; drivers are `{{stack.driver}}`, run by `{{stack.run_cmd}}` (`project.toml`: `[experiments] driver`, `[stack] run_cmd`).
+{{/if}}
+- Go wide on small cases before deep on large ones. Smoke the hardest corners first. Every driver re-checks one case whose answer is known independently.
+- Run via `bin/exp-run <slug> [--smoke|--full|--deep]` (seconds-long pipeline check, the real sweep, an opt-in larger sweep; watchdog + one bundle per run). Analyze a bundle later, cold, into its `analysis.md`; `bin/exp-pending` lists the rest.
+- When the watchdog kills a run, make the test cheaper. Never just raise the limit.
+
+Doctrine: [docs/discipline/experiment-doctrine.md](docs/discipline/experiment-doctrine.md). Steps: `experiments/WORKFLOW.md`.
+{{/if}}

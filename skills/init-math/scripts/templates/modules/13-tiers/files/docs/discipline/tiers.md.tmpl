@@ -1,0 +1,182 @@
+# Model tiers, workers and escalation
+
+This project uses two model settings (`project.toml`, `[tiers]`): a **strong tier**
+({{tiers.strong}}) and a **worker tier** ({{tiers.worker}}). This doc says what each one does,
+how work moves between them, and how a worker hands back.
+
+## Why two tiers
+
+Direction and execution succeed in different ways. Direction (which route, what to try
+next, is this result what it seems) is judged later and is expensive to get wrong.
+Execution (does this lemma type-check, does this script reproduce the known value) has a
+fast, mechanical success signal. So the strong tier directs and reviews, and the worker
+tier executes, checked by that mechanical signal.
+
+## Routing rules
+
+- **The session's tier follows its shape, decided up front.** A design session (choosing a
+  route, decomposing a hard step, deciding what a result means) runs on the strong tier.
+  A session that only works through an already-written brick list may run on the worker
+  tier while the owner ({{owner}}) is present. An unattended stretch runs as a strong coordinator
+  dispatching workers, so that every escalation goes to the coordinator, not to the owner.
+  *Why:* a cheap model directing itself escalates to the owner, who then becomes the
+  bottleneck.
+- **Do not switch models in the middle of a session.** *Why:* the switch throws away the
+  cached context, and the session pays for it again at the new price. Only the owner can
+  switch a session's model. In a worker-tier session the owner runs, NEED-DIRECTION goes to
+  the owner; the design continues in a strong-tier session started from the written state.
+- **Dispatch whole bricks.** A worker starts cold and spends effort reading in; a one-line
+  fix does not repay that. A brick is something with its own finish line: a lemma group, a
+  script plus its validation, a table.
+- **Reviewers never run below the tier of the author they review.** Their agent files pin
+  them to the strong tier (`tier: strong` in the source, the strong model in
+  {{#if harness.is_claude}}`.claude/agents/`{{else}}`.codex/agents/`{{/if}}), so a dispatch cannot lower it. *Why:* the review is the
+  signal everything else trusts; it is cheap per run, so there is nothing to save.
+- **A worker-tier session that meets a design question returns NEED-DIRECTION.** It does not
+  pick a route, even when it feels sure. *Why:* choosing a route is the strong tier's job;
+  a cheaper model that picks its own makes exactly the decision the split exists to keep
+  from it.
+- **Analysis, record wording and the brick list itself stay on the strong tier.**
+
+*Anti-scope:* none of this forbids the coordinator a small inline edit that needs the
+surrounding context; it forbids grinding (repeated attempts, writing whole scripts) inline
+when a worker could take the unit.
+
+## The coordinator owns every long job
+
+A **long job** is anything that may run past about two minutes{{#if modules.experiments}} (the default smoke-run limit in `[experiments.limits]` is 120 s){{/if}}: a full build, a sweep over
+many cases, a timing probe over representative inputs. Only the coordinator starts one.
+*Anti-scope:* a seconds-scale check on one small case is not a long job; workers run those.
+
+*Why:* a dispatched agent's turn ends when it returns. A job it started keeps running with
+nobody waiting for its result (or dies with the agent), and the result is lost. No hook
+can reliably tell a worker's command from the coordinator's, so the rule lives in two
+places. The worker's charter is the `worker` agent files{{#if modules.lean}} (also `lean-worker`){{/if}}{{#if modules.experiments}} (also `exp-worker`){{/if}}; the
+coordinator writes the same clause into every brief it sends: **validate on one
+seconds-scale known-answer case, then return the exact command.** The hook `hooks/agent-brief-lint.py` nudges when a brief
+asks an agent to run or time a long job.
+{{#if modules.launch}}
+How the coordinator then runs it: [launch.md](launch.md).
+{{/if}}
+
+## How a worker ends: DONE, PARTIAL, NEED-DIRECTION
+
+- `DONE`: the brick landed; the return names the check run and shows its raw output.
+- `PARTIAL`: what landed, what did not, and the remaining bricks as a numbered list.
+- `NEED-DIRECTION`: an escalation trigger fired. The return carries the trigger, the
+  current state, each attempt, and the routes the worker sees, **without picking one**.
+
+On a proof or construction brick the return carries a `CLAIM:` line (`PROVED`,
+`COUNTEREXAMPLE`, `GAPS`, `ARGUED`, `NOT-PROVED`, `NONE`; the charter's table). **Copy it
+verbatim** into your report and the record: a reworded verdict loses what was claimed, and an
+`ARGUED` claim's labels and premises are what keep it from being read as a result. The same
+goes for any report to the owner: it repeats the record's hedge ("heuristically", "on n ≤
+50", "conditional on …"), never a stronger summary of it. `NOT-PROVED` records that three
+different attempts failed; it is not evidence that the statement is false, and it never
+moves a conjecture's status.
+
+Every return also carries the exact commands run and raw values next to any pass/fail
+derived from them, so the coordinator can re-check instead of trusting a summary.
+
+## Escalation triggers (mechanical on purpose)
+
+An **attempt** is one edit-plus-check cycle: change something, run the check, read the
+result. A worker stops and returns NEED-DIRECTION when:
+
+1. the same goal survives 3 attempts, each genuinely different;
+2. the same build or run error survives 2 attempts unchanged (a special case of 1 that
+   fires earlier);
+3. there are two or more possible routes and the brief did not choose;
+4. something it needs (a lemma, a function, a reference) is missing after one search;
+5. a known-answer check still fails after 1 fix attempt{{#if modules.experiments}} (the `exp-worker` gets two:
+   passing that check is what its driver is built for){{/if}};
+6. a resource limit trips;
+7. a result contradicts the brief, the project's records or an earlier run;
+8. it is about to write a judgment of difficulty, scope or impossibility, or any sentence
+   bound for a durable record.
+
+If two triggers apply, whichever fires first wins; do not wait for the others.
+
+*Why mechanical:* a model is a poor judge of its own stuckness. Left to judge, it either
+grinds for hours or quits at the first obstacle. A counted trigger does neither.
+
+## Answering NEED-DIRECTION
+
+The coordinator decides; it does not take the grinding over.
+{{#if harness.cap.resume_subagent}}
+Answer by messaging the **same** worker, which keeps its context, rather than dispatching a
+fresh one that must read everything in again.
+{{else}}
+Dispatch a fresh worker with the previous report and your decision attached; the report is
+written to be complete enough to restart from.
+{{/if}}
+Once answered, the work continues on the worker tier.
+{{#if modules.attempts}}
+When the answer is a choice of route on a hard target, load the `attack` skill: it lists the
+approaches and moves, and records the chosen line with `bin/attempts new`.
+{{/if}}
+
+**A stuck search is answered by breadth (best-of-n); correctness is decided by a step
+audit.**{{#if modules.attempts}} (principle: best-of-n-when-stuck){{/if}} When the problem is *finding* something (the right lemma, an approach that works,
+candidate conjectures), dispatch several attempts with deliberately different approaches
+and keep the best: sampling widens the set of ideas tried. But whether an argument is
+*correct* is decided by checking it step by step (a reviewer), never by a vote across
+attempts: several attempts can agree on an answer while each hides a broken step.
+*Anti-scope:* best-of-n is for a search that is genuinely stuck, not the first attempt at
+every brick.
+{{#if modules.attempts}}
+Each parallel or restarted attempt is briefed with three things: the problem, the
+question's examples bank, and `bin/attempts --obstructions <target>` under "Already ruled
+out". Not the failed transcripts: shown attempts anchor the next one on the same route.
+Withholding them is a judgment, not yet measured; say in the record which inputs a restart
+got.
+{{/if}}
+
+## Keeping the coordinator's context small
+
+The coordinator's context is the expensive one: it is re-read on every turn. Keep durable
+state on disk (progress logs, the records, commits) and keep worker returns short (a
+headline, the evidence, the command). After the context is summarized or reset, rebuild
+the state from those files and from the recent commits, not from memory of the summary.
+
+## Briefing an agent
+
+Templates (copy, fill, delete what does not apply):
+
+- [dispatcher-brief.md](../templates/dispatcher-brief.md): a strong coordinator taking
+  over several independent threads (orient, fan out, verify, record).
+- [worker-handoff.md](../templates/worker-handoff.md): a worker working through a
+  brick list while the owner is present.
+- [agent-brief.md](../templates/agent-brief.md): one fresh agent, one bounded task, run
+  to completion in one turn.
+- [subagent-brief-checklist.md](../templates/subagent-brief-checklist.md): the
+  guardrails to paste into any brief.
+
+When a brief asks the agent to *find something new*, list what is already known not to be
+new: earlier negative results **and** known symmetries or trivial cases of the object.
+*Why:* an agent with no context rediscovers a known symmetry and reports it as a finding.
+
+## Asking the owner
+
+Before asking the owner to pick one of several next steps, check whether two or more of
+them are independent, cheap threads within the task you were given. If so, do them (in
+parallel where you can), report, and stop at the end of the task, keeping only the real
+choice as a one-line note. Ask only at a genuine fork: mutually exclusive designs, an
+irreversible or outward-facing call, or a scope decision only the owner can make. Starting
+a new research direction needs a yes unless there is a continue signal (the owner's most
+recent message says keep going, or a standing mandate they have not withdrawn).{{#if modules.stopping}} Full
+rules: [stopping.md](stopping.md).{{/if}} What a task leaves unspecified is a different matter: before a
+long computation or a new line of work, the
+intake check (the coordinator's ground rules) takes each answer from
+`notes/procedures.md` and asks the owner about the rest, in one question.
+{{#if harness.cap.ask_tool}}
+The hook `hooks/askquestion-fanout-nudge.py` nudges once when a structured question offers a
+single choice among three or more options.
+{{/if}}
+
+## Measuring whether this works
+
+When a reviewer rejects a worker's output, or you redo it, note it{{#if modules.reflect}} as friction (see
+the reflection loop){{/if}} with the worker's tier. If the worker tier's redo rate climbs,
+or it fails silently (a passing check that hid a wrong result), move that kind of work back
+to the strong tier.

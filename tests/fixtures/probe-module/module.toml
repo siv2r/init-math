@@ -1,0 +1,34 @@
+# Test-only module: exercises every emission path and records raw hook payloads, so a
+# real harness session can capture fixtures for tests/payloads/. Never shipped.
+id = "probe"
+number = 99
+title = "Probe (test only)"
+group = "-"
+status = "included"
+order = 990
+summary = "Records raw hook payloads to logs/probe-payloads.jsonl."
+
+[[hooks]]
+script = "hooks/probe.py"
+event = "PreToolUse"
+actions = ["shell", "edit", "spawn", "ask", "wakeup"]
+
+[[hooks]]
+script = "hooks/probe.py"
+event = "PostToolUse"
+actions = ["shell", "edit"]
+
+[[hooks]]
+script = "hooks/probe.py"
+event = "PostToolUseFailure"
+actions = ["shell"]
+harnesses = ["claude"]
+
+[[hooks]]
+script = "hooks/probe.py"
+event = "Stop"
+
+[[per_item]]
+template = "item.md.tmpl"
+over = "seeds.questions"
+path = "probe/{id}-{slug}.md"

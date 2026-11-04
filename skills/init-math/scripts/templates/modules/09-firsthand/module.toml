@@ -1,0 +1,24 @@
+id = "firsthand"
+number = 9
+title = "Firsthand checks and prior-art search"
+group = "C"
+status = "included"
+order = 90
+summary = "Search the project's own record, then the literature, before building; give every load-bearing claim (a citation, an absence, a scope verdict, a premise handed to an agent) one firsthand check before it propagates."
+# lit-search often runs as a background subagent, which cannot ask for permission: without
+# this its web calls are refused (2026-10-09 end-to-end run).
+allow_tools = ["web_search", "web_fetch"]
+
+[[hooks]]
+script = "hooks/lit-search-predispatch.py"
+event = "PreToolUse"
+actions = ["spawn"]
+
+[[hooks]]
+script = "hooks/lit-search-gate.py"
+event = "PreToolUse"
+actions = ["shell"]
+
+[[hooks]]
+script = "hooks/durable-ack-guard.py"
+event = "Stop"

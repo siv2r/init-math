@@ -1,0 +1,11 @@
+## Lines of attack
+
+- **line of attack**: one approach to one target (a question, {{#if modules.conjectures}}a conjecture, {{/if}}a brick of a work folder, or a named lemma), tried over possibly many sessions. Not the same as an **attempt**, which is one edit-plus-check cycle inside a brick.
+- **attempt record**: the file in `wiki/attempts/` (`L<nnn>-<slug>.md`) for one line of attack, written through `bin/attempts`; its log is only ever appended to.
+- **obstruction**: the precise reason a line of attack stopped working, recorded under "Where it broke", with whether it is an obstruction to the method or only to this execution.
+- **set aside / refuted / dormant**: a line is *set aside* when the search failed but nothing was disproved; *refuted* when a precise statement it relied on was disproved; *dormant* when it waits for a named tool, or after stepping down to an easier goal.
+- **stall audit**: the short check run when one target has collected several dead lines: what the belief rests on, whether the examples tried are representative, the opposite direction, rival statements.
+- **budget** (of a line of attack): how many worker returns or sessions it may use before the coordinator decides whether to extend it, switch, step down or set it aside. Never measured in time; repairs do not count.
+- **step down a rung**: replace a stuck target by an easier one that still teaches something (a special case, a conditional result, a counterexample to a weakening, an adjacent question); the original line goes dormant.
+- **move**: a named prompt for an approach (a toy model, a change of representation, ...), listed in the registry with `kind = "move"` and worked examples in `docs/discipline/moves.md`.
+- **repair** (of a construction): a change that answers a recorded attack on the current construction; part of the same line, not a new one.

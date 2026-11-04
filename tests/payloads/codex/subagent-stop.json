@@ -1,0 +1,14 @@
+{
+  "agent_id": "01a11c59-4493-7fd2-a101-c1b7331fc506",
+  "agent_transcript_path": "/home/user/.codex/sessions/2026/10/08/rollout-2026-10-08T11-29-34-01a11c59-4493-7fd2-a101-c1b7331fc506.jsonl",
+  "agent_type": "probe-reviewer",
+  "cwd": "/tmp/proj",
+  "hook_event_name": "SubagentStop",
+  "last_assistant_message": "pong",
+  "model": "gpt-6-luna",
+  "permission_mode": "bypassPermissions",
+  "session_id": "01a11c59-386e-76e3-8954-062556212682",
+  "stop_hook_active": false,
+  "transcript_path": "/home/user/.codex/sessions/2026/10/08/rollout-2026-10-08T11-29-31-01a11c59-386e-76e3-8954-062556212682.jsonl",
+  "turn_id": "01a11c59-44c2-78d0-ad49-a1fec40a2cf7"
+}

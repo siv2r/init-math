@@ -1,0 +1,459 @@
+#!/usr/bin/env python3
+"""Check the research questions, and every conjecture's link to them.
+
+selftest: yes
+
+Usage:
+  bin/question-check              check, print FAIL/WARN lines, exit 1 on any FAIL
+  bin/question-check --tsv        also print one row per conjecture: whether it links an
+                                  active question (only those are eligible for work)
+  bin/question-check --root DIR   check the project at DIR (default: this script's project)
+  bin/question-check --selftest   run the built-in tests on temporary fixtures
+
+Questions (wiki/questions/QNNN-*.md; the folder is set in project.toml [questions] dir):
+  FAIL  frontmatter `id` missing or not matching the file name; duplicate id
+  FAIL  status not one of proposed | active | parked | answered
+  FAIL  status `active` with an empty `activated-by:` (only the owner activates a question,
+        and records it there)
+  FAIL  no `# QNNN: <sentence>` heading, or no numbered answer shapes (`A1. ...`)
+  WARN  `activated-by:` names someone other than the owner in project.toml
+  WARN  an active question that no conjecture links (when the conjecture ledger exists)
+  WARN  more questions active than project.toml [questions] warn_active_over (default 1):
+        after a change of direction, ask the owner whether older ones are parked or answered
+  FAIL  `satellite_of:` names no question, itself, or a question with no file
+  WARN  a satellite of a satellite (attach it to the main question instead)
+  WARN  more open satellites on one question than [questions] satellites_max (0: no limit)
+  FAIL  `specializes:` names no question, itself, or a question with no file
+
+Satellites: a question with `satellite_of: Q<nnn>` is a smaller question around that one.
+With [questions] satellites = true (the default), a proposed or active satellite of an
+active question is eligible for work, like the question itself; with false it is not.
+
+Conjectures (wiki/conjectures/CNNN-*.md, if that folder exists; [conjectures] dir):
+  FAIL  no `questions: [...]`, or a listed question id with no file
+  FAIL  no `question-tie:` sentence
+  FAIL  status not one of open | testing | weakly-supported | supported | refuted |
+        proved | scope-tight
+  FAIL  a `@priority` line with no `activated-by:` line in the file (priority is the
+        owner's lever)
+  WARN  `question-tie:` or `family:` is still a placeholder (`(not stated yet)` or `<...>`)
+  WARN  `question-tie:` looks like a stand-in: under 5 words, or containing whatever, tbd,
+        todo, recommend or n/a (a tie states a consequence for the answer)
+  WARN  `question-tie:` names an answer shape some other way than A<n> (e.g. "shape (a)"),
+        or cites an A<n> that none of its questions has
+  WARN  links no active question: parked by construction (not eligible for work)
+  WARN  status `refuted` with no `confirmed-by:` line (the counterexample, confirmed a second
+        way: another program or method, or by hand)
+
+The marks are a reminder for agents, not authentication: anyone can type a name.
+"""
+from __future__ import annotations
+
+import os
+import re
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+Q_STATUSES = ("proposed", "active", "parked", "answered")
+C_STATUSES = ("open", "testing", "weakly-supported", "supported", "refuted", "proved",
+              "scope-tight")
+Q_FILE = re.compile(r"^(Q\d{3})-.+\.md$")
+C_FILE = re.compile(r"^(C\d{3})-.+\.md$")
+ITEM = re.compile(r"^\s*(?:-\s*)?(?:\*\*)?A(\d+)\.", re.M)
+PRIORITY = re.compile(r"^\s*(?:[-*]\s*)?`?@priority\b", re.M)
+SHAPE_REF = re.compile(r"\bA(\d+)\b")
+SHAPE_LETTER = re.compile(r"\bshapes?\s*\(?([a-z]|[ivx]{1,4})\)", re.I)
+ACTIVATED = re.compile(r"^\s*(?:[-*]\s*)?activated-by:[ \t]*([^#\n]*)", re.M)
+
+
+def load_config(root: Path) -> dict:
+    try:
+        with open(root / "project.toml", "rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def active_limit(root: Path) -> int:
+    try:
+        return int(load_config(root).get("questions", {}).get("warn_active_over", 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def satellite_config(root: Path) -> tuple[bool, int]:
+    q = load_config(root).get("questions", {})
+    try:
+        cap = int(q.get("satellites_max", 0))
+    except (TypeError, ValueError):
+        cap = 0
+    return q.get("satellites", True) is not False, cap
+
+
+def eligible(qid: str, questions: dict, satellites_on: bool) -> bool:
+    """Active, or an open satellite of an active question when satellites are on."""
+    info = questions.get(qid)
+    if not info:
+        return False
+    if info["status"] == "active":
+        return True
+    parent = questions.get(info.get("satellite_of", ""))
+    return bool(satellites_on and parent and parent["status"] == "active"
+                and info["status"] in ("proposed", "active"))
+
+
+def dirs(root: Path) -> tuple[Path, Path, str]:
+    cfg = load_config(root)
+    qdir = root / cfg.get("questions", {}).get("dir", "wiki/questions")
+    cdir = root / cfg.get("conjectures", {}).get("dir", "wiki/conjectures")
+    owner = str(cfg.get("project", {}).get("owner", "")).strip()
+    return qdir, cdir, owner
+
+
+def frontmatter(text: str) -> tuple[dict, str]:
+    """`key: value` lines between --- fences; an inline `# comment` is dropped."""
+    if not text.startswith("---\n"):
+        return {}, text
+    end = text.find("\n---", 4)
+    if end < 0:
+        return {}, text
+    meta = {}
+    for line in text[4:end].splitlines():
+        key, sep, val = line.partition(":")
+        if sep and key.strip() and not key.strip().startswith("#"):
+            meta[key.strip()] = re.sub(r"\s+#.*$", "", val).strip()
+    return meta, text[end + 4:]
+
+
+def id_list(val: str) -> list[str]:
+    return [v.strip().strip("'\"") for v in val.strip("[] ").split(",") if v.strip()]
+
+
+def check(root: Path, tsv: bool = False, out=print) -> tuple[list[str], list[str]]:
+    qdir, cdir, owner = dirs(root)
+    fails: list[str] = []
+    warns: list[str] = []
+    questions: dict[str, dict] = {}
+    if not qdir.is_dir():
+        fails.append(f"no questions folder at {qdir.relative_to(root) if qdir.is_relative_to(root) else qdir}")
+        return fails, warns
+    for p in sorted(qdir.iterdir()):
+        m = Q_FILE.match(p.name)
+        if not m:
+            continue
+        text = p.read_text(encoding="utf-8")
+        meta, body = frontmatter(text)
+        name = p.name
+        qid = meta.get("id", "")
+        if qid != m.group(1):
+            fails.append(f"{name}: frontmatter id `{qid or '?'}` does not match the file name")
+        if m.group(1) in questions:
+            fails.append(f"{name}: duplicate question id {m.group(1)}")
+        status = meta.get("status", "")
+        if status not in Q_STATUSES:
+            fails.append(f"{name}: status `{status or '?'}` is not one of {', '.join(Q_STATUSES)}")
+        by = meta.get("activated-by", "")
+        if status == "active" and not by:
+            fails.append(f"{name}: status is active but `activated-by:` is empty; only the owner "
+                         "activates a question (an agent only when the owner asks)")
+        elif by and owner and by != owner:
+            warns.append(f"{name}: activated-by `{by}` is not the owner in project.toml (`{owner}`)")
+        if not re.search(rf"^#\s+{m.group(1)}:\s*\S", body, re.M):
+            fails.append(f"{name}: no `# {m.group(1)}: <one sentence>` heading")
+        if not ITEM.search(body):
+            fails.append(f"{name}: no numbered answer shapes (`A1. ...` under `## Answer shapes`)")
+        questions[m.group(1)] = {"status": status, "linked": False,
+                                 "shapes": {int(n) for n in ITEM.findall(body)},
+                                 "satellite_of": meta.get("satellite_of", ""),
+                                 "specializes": meta.get("specializes", "")}
+
+    for q, info in sorted(questions.items()):
+        parent = info["specializes"]
+        if not parent:
+            continue
+        if not re.fullmatch(r"Q\d{3}", parent) or parent == q:
+            fails.append(f"{q} specializes: `{parent}` is not another question's id (Q<nnn>)")
+        elif parent not in questions:
+            fails.append(f"{q} specializes: {parent} has no file in the questions folder")
+
+    sat_on, sat_cap = satellite_config(root)
+    open_sats: dict[str, list[str]] = {}
+    for q, info in sorted(questions.items()):
+        parent = info["satellite_of"]
+        if not parent:
+            continue
+        name = f"{q} satellite_of"
+        if not re.fullmatch(r"Q\d{3}", parent) or parent == q:
+            fails.append(f"{name}: `{parent}` is not another question's id (Q<nnn>)")
+        elif parent not in questions:
+            fails.append(f"{name}: {parent} has no file in the questions folder")
+        else:
+            if questions[parent]["satellite_of"]:
+                warns.append(f"{q}: a satellite of {parent}, which is itself a satellite; attach it to "
+                             f"{questions[parent]['satellite_of']}")
+            if info["status"] in ("proposed", "active"):
+                open_sats.setdefault(parent, []).append(q)
+    for parent, sats in sorted(open_sats.items()):
+        if sat_cap > 0 and len(sats) > sat_cap:
+            warns.append(f"{parent} has {len(sats)} open satellites ({', '.join(sats)}), more than "
+                         f"[questions] satellites_max = {sat_cap}: park or answer one first")
+
+    active_qs = sorted(q for q, info in questions.items() if info["status"] == "active")
+    limit = active_limit(root)
+    if limit > 0 and len(active_qs) > limit:
+        warns.append(f"{len(active_qs)} questions are active ({', '.join(active_qs)}): if the work "
+                     f"has moved on, ask {owner or 'the owner'} whether the older ones are now "
+                     "parked or answered (threshold: [questions] warn_active_over)")
+
+    rows = []
+    if cdir.is_dir():
+        for p in sorted(cdir.iterdir()):
+            m = C_FILE.match(p.name)
+            if not m:
+                continue
+            text = p.read_text(encoding="utf-8")
+            meta, body = frontmatter(text)
+            name = p.name
+            status = meta.get("status", "")
+            if status not in C_STATUSES:
+                fails.append(f"{name}: status `{status or '?'}` is not one of {', '.join(C_STATUSES)}")
+            qs = id_list(meta.get("questions", ""))
+            if not qs:
+                fails.append(f"{name}: no `questions: [Qxxx]`; every conjecture serves at least one question")
+            for q in qs:
+                if q not in questions:
+                    fails.append(f"{name}: question {q} has no file in the questions folder")
+                else:
+                    questions[q]["linked"] = True
+            if not meta.get("question-tie", ""):
+                fails.append(f"{name}: no `question-tie:` sentence (what a verdict here changes in the answer)")
+            for field in ("question-tie", "family"):
+                if meta.get(field, "").startswith(("(not stated yet)", "<")):
+                    warns.append(f"{name}: `{field}:` is still a placeholder; state it")
+            tie = meta.get("question-tie", "")
+            if tie and not tie.startswith(("(not stated yet)", "<")) and (
+                    len(tie.split()) < 5 or STAND_IN.search(tie)):
+                warns.append(f"{name}: `question-tie:` looks like a stand-in ({tie[:50]!r}); "
+                             "state what a verdict here changes in the answer")
+            letter = SHAPE_LETTER.search(tie)
+            known = set().union(*(questions[q]["shapes"] for q in qs if q in questions))
+            cited = sorted({int(n) for n in SHAPE_REF.findall(tie)} - known)
+            if letter:
+                warns.append(f"{name}: `question-tie:` names an answer shape as ({letter.group(1)}); "
+                             "cite it as A<n>, the number in the question file")
+            elif cited and known:
+                warns.append(f"{name}: `question-tie:` cites "
+                             f"{', '.join(f'A{n}' for n in cited)}, which none of "
+                             f"{', '.join(qs)} has (they have A1-A{max(known)})")
+            if PRIORITY.search(body) and not any(v.strip() for v in ACTIVATED.findall(body)):
+                fails.append(f"{name}: `@priority` with no `activated-by:` line; priority is the owner's "
+                             "lever (agents may suggest it, not set it)")
+            active = [q for q in qs if eligible(q, questions, sat_on)]
+            if qs and not active and status not in ("refuted", "proved"):
+                warns.append(f"{name}: links no active question (or open satellite of one), so it is "
+                             "parked by construction")
+            if status == "refuted" and not re.search(r"^\s*[-*]?\s*confirmed-by:\s*\S", body, re.M):
+                warns.append(f"{name}: refuted with no `confirmed-by:` line; confirm the counterexample "
+                             "a second way (another program or method, or by hand) and say how")
+            rows.append((m.group(1), status, ",".join(qs), "yes" if active else "no",
+                         str(body.count("@residue"))))
+        for q, info in questions.items():
+            if info["status"] == "active" and not info["linked"]:
+                warns.append(f"{q}: active, but no conjecture links it yet")
+    if tsv:
+        out("conjecture\tstatus\tquestions\teligible\tresidues")
+        for r in rows:
+            out("\t".join(r))
+    return fails, warns
+
+
+# --- selftest ----------------------------------------------------------------
+
+GOOD_Q = """---
+id: Q001
+status: active              # proposed | active | parked | answered
+activated-by: Ada           # filled ONLY by the owner when flipping to active
+---
+# Q001: What is the exponential growth rate of the largest cap set in F_3^n?
+
+## Answer shapes
+A1. the exact base c with max size (c + o(1))^n
+A2. an upper bound below 2.756
+
+## Why it matters
+"""
+PROPOSED_Q = GOOD_Q.replace("Q001", "Q002").replace("status: active", "status: proposed") \
+    .replace("activated-by: Ada", "activated-by:")
+GOOD_C = """---
+id: C001
+status: open
+questions: [Q001]
+question-tie: if true, A2 holds with the bound from the product construction.
+family: cap sets in F_3^n, n <= 8
+---
+# C001: the largest cap set for n <= 8 is a product of small optimal caps.
+## Evidence
+## Next steps
+@residue: exhaustive search at n = 7
+"""
+
+
+def _write(d: Path, name: str, text: str) -> None:
+    (d / name).write_text(text, encoding="utf-8")
+
+
+STAND_IN = re.compile(r"whatever|tbd|todo|recommend|n/a", re.I)
+
+
+def selftest() -> int:
+    bad = 0
+
+    def expect(label: str, root: Path, want_fail: list[str], want_warn: list[str] = ()) -> None:
+        nonlocal bad
+        fails, warns = check(root, out=lambda *_: None)
+        ok = all(any(w in f for f in fails) for w in want_fail) and bool(fails) == bool(want_fail)
+        ok = ok and all(any(w in x for x in warns) for w in want_warn)
+        if not ok:
+            bad += 1
+            print(f"SELFTEST FAIL {label}: fails={fails} warns={warns}")
+
+    with tempfile.TemporaryDirectory() as t:
+        root = Path(t)
+        (root / "project.toml").write_text('[project]\nowner = "Ada"\n')
+        q = root / "wiki" / "questions"
+        c = root / "wiki" / "conjectures"
+        q.mkdir(parents=True)
+        _write(q, "Q001-cap-sets.md", GOOD_Q)
+        _write(q, "TEMPLATE-proposed.md", "---\nid: QNNN\nstatus: proposed\n---\n")
+        # No conjecture folder: questions alone must pass (the ledger module may be off).
+        expect("questions only", root, [])
+        c.mkdir(parents=True)
+        _write(c, "C001-product-caps.md", GOOD_C)
+        expect("good tree", root, [])
+
+        _write(q, "Q002-pending.md", PROPOSED_Q)
+        _write(c, "C002-parked.md", GOOD_C.replace("C001", "C002").replace("[Q001]", "[Q002]"))
+        expect("parked by construction", root, [], ["parked by construction"])
+        (c / "C002-parked.md").unlink()
+
+        _write(q, "Q003-self-activated.md", GOOD_Q.replace("Q001", "Q003")
+               .replace("activated-by: Ada", "activated-by:"))
+        expect("active without activated-by", root, ["activated-by:` is empty"])
+        _write(q, "Q003-self-activated.md", GOOD_Q.replace("Q001", "Q003"))
+        expect("two active questions", root, [], ["2 questions are active (Q001, Q003)"])
+        (root / "project.toml").write_text('[project]\nowner = "Ada"\n[questions]\nwarn_active_over = 2\n')
+        if any("questions are active" in w for w in check(root, out=lambda *_: None)[1]):
+            bad += 1
+            print("SELFTEST FAIL warn_active_over = 2 must allow two active questions")
+        (root / "project.toml").write_text('[project]\nowner = "Ada"\n')
+        _write(q, "Q003-self-activated.md", GOOD_Q.replace("Q001", "Q003")
+               .replace("activated-by: Ada", "activated-by: Bot"))
+        expect("activated-by not owner", root, [], ["is not the owner"])
+        (q / "Q003-self-activated.md").unlink()
+
+        _write(q, "Q004-no-shapes.md", GOOD_Q.replace("Q001", "Q004").split("## Answer shapes")[0])
+        expect("no answer shapes", root, ["no numbered answer shapes"])
+        (q / "Q004-no-shapes.md").unlink()
+
+        _write(c, "C003-orphan.md", GOOD_C.replace("C001", "C003").replace("questions: [Q001]\n", ""))
+        expect("conjecture with no question", root, ["no `questions:"])
+        _write(c, "C003-orphan.md", GOOD_C.replace("C001", "C003").replace("[Q001]", "[Q009]"))
+        expect("unknown question", root, ["Q009 has no file"])
+        _write(c, "C003-orphan.md", GOOD_C.replace("C001", "C003").replace("question-tie:", "note:"))
+        expect("no question-tie", root, ["no `question-tie:`"])
+        _write(c, "C003-orphan.md", GOOD_C.replace("C001", "C003").replace("status: open", "status: done"))
+        expect("bad status", root, ["status `done`"])
+        _write(c, "C003-orphan.md", GOOD_C.replace("C001", "C003") + "@priority: run this first\n")
+        expect("priority without owner", root, ["`@priority` with no `activated-by:`"])
+        _write(c, "C003-orphan.md", GOOD_C.replace("C001", "C003")
+               + "@priority: run this first\nactivated-by: Ada\n")
+        expect("priority with owner", root, [])
+        _write(c, "C003-orphan.md", GOOD_C.replace("C001", "C003")
+               .replace("question-tie: if true", "question-tie: (not stated yet) if true"))
+        expect("placeholder tie", root, [], ["`question-tie:` is still a placeholder"])
+        _write(c, "C003-orphan.md", GOOD_C.replace("C001", "C003")
+               .replace("question-tie: if true, A2 holds with the bound from the product construction.",
+                        "question-tie: whatever you recommend"))
+        expect("stand-in tie", root, [], ["looks like a stand-in"])
+        _write(c, "C003-orphan.md", GOOD_C.replace("C001", "C003")
+               .replace("question-tie: if true, A2 holds with the bound from the product construction.",
+                        "question-tie: A2 holds"))
+        expect("short tie", root, [], ["looks like a stand-in"])
+        _write(c, "C003-orphan.md", GOOD_C.replace("C001", "C003")
+               .replace("A2 holds", "answer shape (a) holds"))
+        expect("tie names a shape by letter", root, [], ["names an answer shape as (a)"])
+        _write(c, "C003-orphan.md", GOOD_C.replace("C001", "C003").replace("A2 holds", "A7 holds"))
+        expect("tie cites a missing shape", root, [], ["cites A7, which none of Q001 has"])
+        (c / "C003-orphan.md").unlink()
+        if any("question-tie" in w for w in check(root, out=lambda *_: None)[1]):
+            bad += 1
+            print("SELFTEST FAIL a tie citing A2 of Q001 must not warn")
+
+        sat = PROPOSED_Q.replace("Q002", "Q005").replace("activated-by:", "activated-by:\nsatellite_of: Q001")
+        _write(q, "Q005-satellite.md", sat)
+        _write(c, "C005-on-satellite.md", GOOD_C.replace("C001", "C005").replace("[Q001]", "[Q005]"))
+        expect("a satellite of an active question is eligible", root, [])
+        if any("parked by construction" in w for w in check(root, out=lambda *_: None)[1]):
+            bad += 1
+            print("SELFTEST FAIL a conjecture on an open satellite must not be parked")
+        (root / "project.toml").write_text('[project]\nowner = "Ada"\n[questions]\nsatellites = false\n')
+        expect("satellites off: parked again", root, [], ["parked by construction"])
+        (root / "project.toml").write_text('[project]\nowner = "Ada"\n[questions]\nsatellites_max = 1\n')
+        _write(q, "Q006-satellite.md", sat.replace("Q005", "Q006"))
+        expect("satellites over the cap", root, [], ["Q001 has 2 open satellites"])
+        (root / "project.toml").write_text('[project]\nowner = "Ada"\n')
+        _write(q, "Q006-satellite.md", sat.replace("Q005", "Q006").replace("satellite_of: Q001", "satellite_of: Q005"))
+        expect("satellite of a satellite", root, [], ["which is itself a satellite"])
+        _write(q, "Q006-satellite.md", sat.replace("Q005", "Q006").replace("satellite_of: Q001", "satellite_of: Q042"))
+        expect("satellite of a missing question", root, ["Q042 has no file"])
+        _write(q, "Q006-satellite.md", sat.replace("Q005", "Q006").replace("satellite_of: Q001", "satellite_of: Q006"))
+        expect("satellite of itself", root, ["is not another question's id"])
+        for f in ("Q005-satellite.md", "Q006-satellite.md"):
+            (q / f).unlink()
+        (c / "C005-on-satellite.md").unlink()
+
+        spec = PROPOSED_Q.replace("Q002", "Q007").replace("activated-by:", "activated-by:\nspecializes: Q001")
+        _write(q, "Q007-special-case.md", spec)
+        expect("a special case filed on its own", root, [])
+        _write(q, "Q007-special-case.md", spec.replace("specializes: Q001", "specializes: Q042"))
+        expect("a special case of a missing question", root, ["Q042 has no file"])
+        (q / "Q007-special-case.md").unlink()
+
+        refuted = GOOD_C.replace("C001", "C008").replace("status: open", "status: refuted")
+        _write(c, "C008-refuted.md", refuted)
+        expect("refuted without confirmed-by", root, [], ["refuted with no `confirmed-by:`"])
+        _write(c, "C008-refuted.md", refuted + "- confirmed-by: recomputed with an independent search\n")
+        if any("confirmed-by" in w for w in check(root, out=lambda *_: None)[1]):
+            bad += 1
+            print("SELFTEST FAIL a refuted conjecture with confirmed-by must not warn")
+        (c / "C008-refuted.md").unlink()
+    print(f"question-check selftest: {'ok' if not bad else f'{bad} failed'}")
+    return 1 if bad else 0
+
+
+def main(argv: list[str]) -> int:
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return 0
+    if "--selftest" in argv:
+        return selftest()
+    root = Path(__file__).resolve().parent.parent
+    if "--root" in argv:
+        i = argv.index("--root")
+        if i + 1 >= len(argv):
+            print("--root needs a directory", file=sys.stderr)
+            return 2
+        root = Path(argv[i + 1]).resolve()
+    fails, warns = check(root, tsv="--tsv" in argv)
+    for f in fails:
+        print("FAIL", f)
+    for w in warns:
+        print("WARN", w)
+    print(f"question-check: {len(fails)} FAIL, {len(warns)} WARN")
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

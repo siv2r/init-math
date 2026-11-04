@@ -1,0 +1,5 @@
+## Safety guard
+
+- **hard block**: a hook refusing a tool call outright, every time. The guard hard-blocks recursive deletes, force pushes or deletes of a main branch, downloads piped into a shell, `sudo`/`doas`, and a `chmod` that makes files writable by everyone; the owner can lift these by starting the agent with `GUARD_OFF=1` in its environment.
+- **owner bypass**: an override that only the owner may use, such as `GATE_OK=1` on a commit or `git --no-verify`. The guard refuses it from an agent and logs the attempt to `logs/feedback.jsonl`.
+- **cd drift**: a `cd` made for a one-off lookup that silently changes the working directory of every later shell call.

@@ -1,0 +1,33 @@
+# Wiki
+
+The project's knowledge base. Read this page, then the `_index.md` of the folder you need,
+before scanning files. Rules: [docs/discipline/literature-wiki.md](../docs/discipline/literature-wiki.md).
+{{#if project.init_date}}
+
+Created: {{project.init_date}}
+{{/if}}
+
+## Folders
+
+| folder | what it holds |
+|---|---|
+| [raw/](raw/_index.md) | sources as ingested (papers, notes, catalog pages); never edited |
+| [inbox/](inbox/_index.md) | sources someone wants read, not yet ingested; one file each |
+| [concepts/](concepts/_index.md) | synthesized articles, one bounded idea each |
+| [references/](references/_index.md) | curated collections: reading lists, bibliographies, tables of results |
+{{#if modules.questions}}
+| [questions/](questions/_index.md) | the research questions |
+{{/if}}
+{{#if modules.conjectures}}
+| [conjectures/](conjectures/_index.md) | the conjecture ledger |
+{{/if}}
+{{#if modules.attempts}}
+| [attempts/](attempts/_index.md) | the lines of attack (`bin/attempts` lists them) |
+{{/if}}
+{{#if modules.known_results}}
+| [known-results/](known-results/_index.md) | what the literature proves, by object of study |
+{{/if}}
+
+The activity log is [log.md](log.md): one entry per operation, appended, never edited.
+Format: `## [YYYY-MM-DD] operation | description`, for example
+`## [2026-03-02] ingest | added the survey on X to raw/ and synthesized concepts/x.md`.

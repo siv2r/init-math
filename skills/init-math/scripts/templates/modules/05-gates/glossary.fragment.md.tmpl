@@ -1,0 +1,24 @@
+## Review gates
+
+{{#if !modules.conjectures}}
+- **finding**: any result you record or report: a measured verdict, a proof, a negative result. Stating it in a message counts. Findings go through the review gates before they are promoted or committed.
+{{/if}}
+- **finding-bearing change**: a change that records a finding{{#if modules.conjectures}}: a conjecture status change to `weakly-supported`, `supported`, `proved`, `refuted` or `scope-tight`{{/if}}, or adding or changing a proof in a document.
+- **gate**: a review step a finding passes before it is promoted or relied on — a scan script or a reviewer agent.
+- **verdict**: a reviewer's one-word result, e.g. `SOUND`, `OVER-CLAIMED`, `CLEAN`, `CLEAN-MINOR`, `NEEDS-WORK`, `SURVIVED`, `REFUTED`, `NARROWED`, `INCONCLUSIVE`.
+- **crux** (load-bearing step): the single condition a whole argument or proof turns on, used exactly once; the proof-referee re-derives it first and reports `CRUX-UNVERIFIED` if it cannot.
+- **proxy / target**: a cheap quantity measured in place of the quantity a claim is really about. A proxy supports a claim only where it is shown to track the target.
+- **claim-strength self-audit**: the questions an author asks before writing a status or verdict (rigorous invariant or proxy? what is the scope gap? is the sample capped?); see `docs/discipline/gate-chain.md`.
+- **scope gap**: the difference between what the evidence covers and what the claim asserts.
+- **two-step promotion**: claim-auditor `SOUND` on the new wording, then red-team `SURVIVED`; only then is the change proposed to the owner, who makes it.
+- **section extract**: the part of a long document under review, plus a short preamble of trusted definitions and results, given to a reviewer instead of the whole file.
+- **canonical draft**: the one document where a finding is written and reviewed first; other records copy from it after it passes.
+- **informal argument**: an argument offered for a claim that is not a proof: a heuristic, a "morally" story, a plausibility count, an argument inside an idealized model, an analogy. How to write and test one: `docs/discipline/informal-arguments.md`.
+- **argued claim**: a claim whose support includes a non-deductive step or an open premise. It is evidence, never a result, and carries its **labels** (`heuristic`, `moral`, `conditional`, `model-only (<model>)`, `analogy (hint)`, `analogy (relay: ...)`, combined with `+`).
+- **handle**: the step that does the work in an argument, separated from ancillary detail.
+- **perturbation**: a cheap test of an argument by changing it (drop a hypothesis, the false variant, corrupt a step, delete an ingredient, a nearby case, the distinguishing feature). It *bites* when the changed argument still "works" or the support disappears.
+- **brief**: the message that dispatches a reviewer: the file and lines, the claim{{#if modules.questions}}, the intended reading{{/if}}, the statements of cited results, what changed. It withholds who wrote the claim, the exploration behind it, the author's confidence and earlier verdicts.
+- **last look**: one fresh claim-auditor check before a proof is proposed, asking only whether the headline ignores anything the document's own gaps section lists.
+- **re-review limit**: three reviews of one document by one reviewer per cycle; at the limit the claim is recorded at the strength the last review supports, with its open issues listed.
+- **review miss**: a claim that passed a gate and was later refuted, narrowed or retracted; recorded as a `review-miss:` line for each gate that passed it.
+- **standing disagreement**: two gates, or a gate and the author, still disagreeing on a fact after one exchange; recorded under `## Disagreements`{{#if harness.is_claude}}, given to an **adjudicator** (a fresh agent that must run a checkable step; the losing side is shown the step, not the ruling){{/if}}, and if still standing put to the owner, whose answer is an `owner-decision:` line.

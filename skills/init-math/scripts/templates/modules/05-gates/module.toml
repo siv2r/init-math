@@ -1,0 +1,21 @@
+id = "gates"
+number = 5
+title = "Review gates"
+group = "B"
+status = "included"
+core = true
+order = 50
+summary = "Fresh-context reviewers (claim-auditor, proof-referee, red-team) check every recorded finding in a fixed cheapest-first order before it is promoted; the agent proposes, the owner promotes."
+depends = []
+
+[[hooks]]
+script = "hooks/large-doc-gate-nudge.py"
+event = "PreToolUse"
+actions = ["spawn"]
+
+# Claude only: other harnesses hide a spawned agent's brief from hooks.
+[[hooks]]
+script = "hooks/brief-leak-nudge.py"
+event = "PreToolUse"
+actions = ["spawn"]
+harnesses = ["claude"]

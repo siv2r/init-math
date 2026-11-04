@@ -1,0 +1,16 @@
+id = "attempts"
+number = 22
+title = "Attempt loop"
+group = "A"
+status = "included"
+order = 220
+summary = "A ledger of lines of attack (where each broke, what it established, what would revive it), with a stall audit when one target keeps failing."
+depends = ["questions", "tiers"]
+
+allow_commands = ["bin/attempts", "bin/principle-usage"]  # pre-approved: records and checks only
+
+[[hooks]]
+script = "hooks/skill-log.py"
+event = "PostToolUse"
+actions = ["skill"]
+harnesses = ["claude"]

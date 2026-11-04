@@ -1,0 +1,8 @@
+## Commit gate
+
+{{#if view.coordinator}}
+- A commit that records a finding (a proof edit{{#if modules.conjectures}}, a conjecture status change{{/if}}) is refused unless each required reviewer saw the exact staged text and its passing verdict was stamped. The gate refuses every time until the reviews exist (`project.toml` `[gates] refuse = "always"`; `"once"` is the alternative).
+- Name the target file in the reviewer's brief (the dispatch is logged); then `bin/gate-stamp <gate> <path> <VERDICT> -` with the reviewer's verdict text, quoted, on standard input (a here-document; the stamp keeps it, so write no verdict file{{#if modules.gates}}; which verdicts pass: the table in [gate-chain.md](docs/discipline/gate-chain.md){{/if}}). Edit after review = review again.
+- `GATE_OK=1` and `--no-verify` are {{owner}}'s, never an agent's.
+- A new clone runs `bin/setup-hooks` once. Details: [docs/discipline/commit-gate.md](docs/discipline/commit-gate.md).
+{{/if}}

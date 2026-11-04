@@ -1,0 +1,347 @@
+# The principle registry: the rules and moves whose use this project records.
+#
+# A principle is not enforced by anything; its use is recorded and reviewed. When you apply
+# one, write a line where the work is recorded:   @principle:<id> — <what it produced>
+# When you deliberately skip one and are giving a reason anyway:
+#                                                   @principle-skipped:<id> — <why it doesn't apply>
+# bin/principle-usage counts both, and the situations that call for each principle where they
+# can be counted, and program review reads the report (docs/discipline/attempt-loop.md).
+#
+# Fields: says (the rule, one line) · reason (the failure it prevents) · defeater (when it does
+# not apply) · home (where its full text lives; the rule there is tagged `(principle: <id>)`) ·
+# trigger (a countable situation that calls for it, or false) · recorded (where a use is
+# written) · skill (the skill that carries it, if any: its loads are counted) · on (false hides it from the report; it does not change the rule's text, which is
+# changed only as an owner-approved workflow change).
+#
+# Trigger values: "attempts.audit_due", "attempts.budget_reached", "attempts.new",
+# "attempts.set_aside", "conjectures.new", "conjectures.status:<value>", "nudge:<hook name>",
+# or false.
+#
+# Moves (kind = "move", at the end) are prompts for an approach, with worked examples in
+# docs/discipline/moves.md. A line of attack names the moves it uses (`moves:` in its record)
+# and credits the ones that helped when it closes; bin/attempts --moves orders them by those
+# credits. `construction = true` gives a move a head start when [field_profile] construction
+# is true. `on = false` takes a move off the menu.
+
+[stall-audit]
+says = "After repeated set-aside lines on one target, audit the belief before attempting again."
+reason = "A long stall can come from a wrong belief built on unrepresentative examples, not from a missing technique."
+defeater = "Skip when the set-aside lines failed for resource reasons, not mathematical ones."
+home = "{{harness.skills_dir}}/attack/SKILL.md"
+trigger = "attempts.audit_due"
+recorded = "@principle:stall-audit in the newest counted line of the target (bin/attempts log)"
+skill = "attack"
+on = true
+
+[budget-review]
+says = "When a line uses its budget, decide: extend it if it is productive, switch, step down a rung, or set it aside."
+reason = "Without a decision point an unproductive line runs on; without the extend option a productive one is cut."
+defeater = "Repairs on a construction spend no budget, so they never call for it."
+home = "{{harness.skills_dir}}/attack/SKILL.md"
+trigger = "attempts.budget_reached"
+recorded = "@principle:budget-review in the line's log (bin/attempts extend writes it)"
+skill = "attack"
+on = true
+{{#if modules.conjectures}}
+
+[falsify-first]
+says = "The first next step on a conjecture is the cheapest way to break it."
+reason = "A counterexample found early saves a proof attempt on a false statement."
+defeater = "Skip when the statement is already settled over its whole stated scope."
+home = "docs/discipline/conjecture-ledger.md"
+trigger = "conjectures.new"
+recorded = "@principle:falsify-first in the conjecture's file or an attempt record"
+on = true
+{{/if}}
+{{#if modules.known_results}}
+
+[known-results-first]
+says = "Look up the object in the known-results catalog before testing, proving or claiming novelty."
+reason = "Work on something already known wastes effort and risks claiming it as new."
+defeater = "Skip for a seconds-long sanity computation."
+home = "docs/discipline/known-results.md"
+{{#if modules.conjectures}}
+trigger = "conjectures.new"
+{{else}}
+trigger = false
+{{/if}}
+recorded = "@principle:known-results-first where the work is recorded"
+on = true
+{{/if}}
+{{#if modules.firsthand}}
+
+[consult-before-constructing]
+says = "Before building a non-trivial method, search the project's record, then the literature."
+reason = "A method that already exists, here or in print, is cheaper to adopt than to rebuild."
+defeater = "Skip for a routine construction whose method is not in question."
+home = "docs/discipline/firsthand-checks.md"
+trigger = false
+recorded = "@principle:consult-before-constructing in the work folder or attempt record"
+on = true
+
+[lit-search-before-claim]
+says = "Run a literature search before characterizing a finding, naming a mechanism or promoting a claim."
+reason = "Most findings have been seen before; a claim of novelty needs a search behind it."
+defeater = "Skip when a search on the same claim is already recorded since the file last changed."
+home = "docs/discipline/firsthand-checks.md"
+trigger = "nudge:lit-search-gate"
+recorded = "@principle:lit-search-before-claim in the file whose claim was searched"
+on = true
+
+[verify-premise]
+says = "Verify a mathematical premise yourself before handing it to an agent in a brief."
+reason = "An agent builds on a false premise without noticing; the error then looks like a result."
+defeater = "Skip for a brief that asks the agent to discover the structure."
+home = "docs/discipline/firsthand-checks.md"
+trigger = false
+recorded = "@principle:verify-premise in the work folder or attempt record"
+on = true
+{{/if}}
+{{#if modules.stopping}}
+
+[cheapest-instance]
+says = "Before calling work deep, list it as bricks including the cheapest tractable instances, and attempt the cheapest."
+reason = "A feeling that work is multi-week is usually wrong once it is broken down; a small case often falls quickly."
+defeater = "Skip when the territory is unscouted: name the scout to run first instead."
+home = "docs/discipline/stopping.md"
+trigger = false
+recorded = "@principle:cheapest-instance in the work folder or attempt record"
+on = true
+
+[reduce-before-blocked]
+says = "Before reporting blocked, state the hard step as an explicit hypothesis and finish everything around it."
+reason = "A blocked report with nothing reduced wastes the work that did not depend on the hard step."
+defeater = "Skip when nothing around the step can be done without it."
+home = "docs/discipline/stopping.md"
+trigger = false
+recorded = "@principle:reduce-before-blocked in the work folder or attempt record"
+on = true
+{{/if}}
+
+[best-of-n-when-stuck]
+says = "Answer a stuck search with several deliberately different attempts; decide correctness by a step audit."
+reason = "One more try of the same approach rarely unsticks a search; a vote never establishes correctness."
+defeater = "Not for the first attempt at a brick."
+home = "docs/discipline/tiers.md"
+trigger = false
+recorded = "@principle:best-of-n-when-stuck in the attempt records of the parallel lines"
+on = true
+{{#if modules.conjectures}}
+
+[name-rivals]
+says = "Each evidence entry names the concrete rivals its check tells apart from the claim; a check every rival passes is a hoop."
+reason = "Evidence supports a claim only against an alternative that would have failed the check."
+defeater = "A hoop is still worth recording; it rules out gross error but does not raise a status."
+home = "docs/discipline/conjecture-ledger.md"
+trigger = false
+recorded = "@principle:name-rivals in the conjecture's evidence entry (or its rivals: line)"
+on = true
+{{/if}}
+{{#if modules.experiments}}
+
+[predict-first]
+says = "Record the expected outcome and its likelihood before a full run, and the surprise after."
+reason = "Once the answer is in, what you expected is rewritten to match it, and the surprise is lost."
+defeater = "Not for smoke runs."
+home = "docs/discipline/experiment-doctrine.md"
+trigger = false
+recorded = "@principle:predict-first in the experiment README's Prediction"
+on = true
+{{/if}}
+
+[perturb-not-reread]
+says = "Test an informal argument by perturbing it (drop a hypothesis, the false variant, corrupt a step, a nearby case), not by rereading it."
+reason = "A fluent argument survives a reread; a broken step can leave its conclusion unchanged."
+defeater = "A routine computational step needs a check, not perturbations."
+home = "docs/discipline/informal-arguments.md"
+trigger = false
+recorded = "@principle:perturb-not-reread in the argument file or the work folder"
+on = true
+{{#if modules.conjectures}}
+
+[argued-not-result]
+says = "An argued claim (a heuristic, a moral, model-only or conditional argument, an analogy) is evidence, labelled, never a result."
+reason = "A heuristic stated as a result becomes a premise others build on, and nobody remembers it was never proved."
+defeater = "An argument the proof-referee accepts as a routine sketch inside a proof is part of that proof."
+home = "docs/discipline/conjecture-ledger.md"
+trigger = false
+recorded = "@principle:argued-not-result where the claim is recorded; the argued: line in its evidence entry"
+on = true
+
+[independence-given-claim]
+says = "Two checks are independent only if they could fail separately given the claim."
+reason = "Checks through one identity, lemma, code path or prompt fail together, so they count once."
+defeater = "None: it is a definition."
+home = "docs/discipline/conjecture-ledger.md"
+trigger = false
+recorded = "@principle:independence-given-claim in the evidence entry; its shares: line"
+on = true
+{{/if}}
+{{#if modules.gates}}
+
+[author-check]
+says = "Before the first reviewer of a proof or construction, name the hardest step, the filler, a pre-mortem and a better route."
+reason = "An author who hides the hard step in a standard argument or a circular lemma sends the referee looking in the wrong place."
+defeater = "Scale it to the claim: a one-line computation needs none."
+home = "{{harness.skills_dir}}/gate-chain/SKILL.md"
+trigger = false
+recorded = "@principle:author-check in the work folder README; a referee crux the check missed is an author-miss: line, and a claim a gate passed that later broke is a review-miss: line"
+skill = "gate-chain"
+on = true
+
+[fresh-context-review]
+says = "A finding is reviewed by fresh-context reviewers, never only by its author."
+reason = "The author of a finding is the worst-placed reader of it."
+defeater = "Scale the review to the claim; a routine computation does not need the full chain."
+home = "docs/discipline/gate-chain.md"
+trigger = "nudge:large-doc-gate-nudge"
+recorded = "@principle:fresh-context-review where the reviewed result is recorded"
+on = true
+{{/if}}
+
+[toy-model]
+kind = "move"
+says = "Solve a version with all difficulties but one switched off, then ask what it used that the real problem lacks."
+reason = "A toy that keeps the hard part shows cheaply whether a method can work at all."
+defeater = "Skip when no simplified version keeps the hard part."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+on = true
+
+[specialize-generalize]
+kind = "move"
+says = "Specialize to a case you can do, or generalize until irrelevant detail disappears."
+reason = "A special case gives a foothold; a stronger statement can give induction the hypothesis it needs."
+defeater = "Skip when the special cases are settled and taught nothing."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+on = true
+
+[assume-missing-lemma]
+kind = "move"
+says = "Assume the step you need, finish the argument around it, then attack the step."
+reason = "The finished argument says exactly how strong the missing lemma must be."
+defeater = "Skip when the assumed lemma is as hard as the target, or is the target restated."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+on = true
+
+[what-if-not]
+kind = "move"
+says = "Negate or drop one hypothesis at a time and see what follows."
+reason = "Seeing what breaks shows which hypothesis does the work, and can produce a counterexample."
+defeater = "Skip a hypothesis already shown necessary by a recorded counterexample."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+on = true
+
+[decoy-object]
+kind = "move"
+says = "Build an object the method cannot tell from the real one but which fails the conclusion."
+reason = "If a decoy exists the method cannot work alone; what separates the two is the missing ingredient."
+defeater = "Skip when the method already uses a property no decoy can share."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+on = true
+
+[port-special-case-proof]
+kind = "move"
+says = "Find the methods behind proofs of special cases and neighbours, and what a bridge lemma must supply."
+reason = "A method that worked nearby is the cheapest candidate, and its bridge lemma names the real gap."
+defeater = "Skip when the neighbouring proofs depend on a property the target lacks."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+on = true
+
+[impossibility-as-assumptions]
+kind = "move"
+says = "Read each impossibility result and known attack as a list of assumptions a construction must break."
+reason = "The attacks mark the boundary; a construction designed against them does not fall to them."
+defeater = "Skip until an impossibility result or attack is known; find or make one first."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+construction = true
+on = true
+
+[repair-by-removing-hypothesis]
+kind = "move"
+says = "Repair a broken construction or proof by removing what the attack relies on, not the symptom."
+reason = "A patch for the symptom falls to the next variant of the same attack."
+defeater = "Skip when the attack uses something the target needs; then the statement must change."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+construction = true
+on = true
+
+[impose-equality-in-bound]
+kind = "move"
+says = "Ask what equality in the best bound would force, and build the object it describes."
+reason = "Equality conditions often describe the extremal object almost completely."
+defeater = "Skip when the bound is far from every known example."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+construction = true
+on = true
+
+[change-representation]
+kind = "move"
+says = "List the implicit choices the current formulation fixes, and vary one."
+reason = "The encoding often makes or breaks an attempt; a step hard in one view can be routine in another."
+defeater = "Skip a representation that only restates the difficulty: one step must get easier."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+on = true
+
+[enumerate-shapes-from-necessary-conditions]
+kind = "move"
+says = "Derive necessary conditions first, cut the possible shapes to a short list, then build each."
+reason = "A short list of shapes turns an open search into a finite set of constructions."
+defeater = "Skip when the necessary conditions still leave too many shapes; sharpen them first."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+construction = true
+on = true
+
+[invariant]
+kind = "move"
+says = "Look for a quantity the problem's operations preserve, or change in only one direction, and compare its value at the start and the goal."
+reason = "An invariant or a monovariant proves impossibility or termination at once, where a search over moves never ends."
+defeater = "Skip when the operations change every natural quantity both ways; first look for a weighting under which one moves only one way."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+on = true
+
+[compute-examples]
+kind = "move"
+says = "Compute many examples, tabulate a quantity across them, and guess the pattern before trying to prove anything."
+reason = "A pattern seen in data names the statement to prove, and often the mechanism."
+defeater = "Skip where small cases say little about the claim; a pattern from them can fail far out."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+on = true
+{{#each toml.seeds.moves}}
+
+[{{id}}]
+kind = "move"
+says = {{says}}
+reason = "A move {{owner}} uses in this field (recorded at init)."
+defeater = "Not stated at init; add one when a line of attack first credits this move."
+home = "docs/discipline/moves.md"
+trigger = false
+recorded = "moves: in the attempt record (bin/attempts new --moves), credited at close with --contributed"
+construction = {{construction}}
+on = true
+{{/each}}

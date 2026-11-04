@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+"""exp-run: run one experiment's driver and archive the run as a self-describing bundle.
+
+    bin/exp-run <slug> [--smoke | --full | --deep] [--note TEXT]
+    bin/exp-run --selftest
+
+selftest: yes
+
+What it does
+  1. Reads the run command: experiments/<slug>/run.toml `run_cmd` if present, else
+     project.toml [stack].run_cmd. `{driver}` is replaced by the driver's path
+     (run.toml driver, else project.toml [experiments].driver, else the one driver.* file).
+  2. Creates the bundle experiments/<slug>/runs/<timestamp>/ and writes manifest.json
+     (command, git commit, tool versions, limits, start time) BEFORE the run.
+  3. Runs the command under bin/guard-run with the tier's time and memory limits
+     ([experiments.limits] in project.toml), with environment
+        EXP_TIER = smoke | full | deep     how big a sweep the driver should do
+        EXP_OUT  = the bundle directory     where the driver writes result.json
+        EXP_SLUG = <slug>                   the experiment's name
+        EXP_ROOT = the project root
+     The command's output goes to output.txt in the bundle.
+  4. Completes manifest.json (end time, exit code, watchdog verdict, peak memory) and
+     checks that the driver wrote result.json with `verdict`, `params` and
+     `known_answer_check`. If it wrote none, a placeholder with verdict "no-result" is left.
+
+A --full or --deep run first runs bin/tie-check on the experiment's README when that script
+exists, and refuses on failure (TIE_OK=1 overrides; the override is logged).
+
+Analysis is a separate, later step: write <bundle>/analysis.md from the bundle alone, in a
+fresh session. bin/exp-pending lists bundles that have no analysis.md yet.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import json
+import os
+import platform
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+DEFAULT_LIMITS = {"smoke": {"time_s": 120, "mem_mb": 2000},
+                  "full": {"time_s": 7200, "mem_mb": 8000},
+                  "deep": {"time_s": 43200, "mem_mb": 16000}}
+REQUIRED = ("verdict", "params", "known_answer_check")
+
+
+def now() -> str:
+    return _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def load_toml(p: Path) -> dict:
+    if not p.exists():
+        return {}
+    with open(p, "rb") as f:
+        return tomllib.load(f)
+
+
+def git(root: Path, *args: str) -> str | None:
+    try:
+        r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() if r.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def tool_versions(cmds: list[str], root: Path) -> dict:
+    out = {"python": platform.python_version(), "platform": platform.platform()}
+    for c in cmds:
+        try:
+            r = subprocess.run(["/bin/sh", "-c", c], cwd=root, capture_output=True, text=True,
+                               timeout=10, stdin=subprocess.DEVNULL)
+            out[c] = (r.stdout or r.stderr).strip().splitlines()[0][:200] if (r.stdout or r.stderr).strip() else ""
+        except (OSError, subprocess.SubprocessError) as e:
+            out[c] = f"unavailable: {e}"
+    return out
+
+
+def section_body(readme: Path, heading: str) -> str | None:
+    """Text of the '## <heading>' section minus placeholders; None if there is no such section."""
+    if not readme.exists():
+        return None
+    found, body = False, []
+    for ln in readme.read_text(encoding="utf-8").splitlines():
+        if ln.startswith("## "):
+            if found:
+                break
+            found = ln[3:].strip().lower().startswith(heading.lower())
+            continue
+        if found:
+            body.append(ln)
+    if not found:
+        return None
+    return "\n".join(b for b in body if b.strip() and not b.strip().startswith(("_(", "<!--")))
+
+
+def log_bypass(root: Path, text: str) -> None:
+    d = root / "logs"
+    d.mkdir(parents=True, exist_ok=True)
+    rec = {"ts": _dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), "kind": "bypass", "text": text}
+    with open(d / "feedback.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, sort_keys=True) + "\n")
+
+
+def run(root: Path, slug: str, tier: str, note: str) -> int:
+    if slug in ("TEMPLATE",) or slug.startswith(("_", ".")) or "/" in slug:
+        print(f"exp-run: '{slug}' is not an experiment; copy experiments/TEMPLATE/ to "
+              f"experiments/<slug>/ first", file=sys.stderr)
+        return 2
+    exp = root / "experiments" / slug
+    if not exp.is_dir():
+        print(f"exp-run: no directory experiments/{slug}/", file=sys.stderr)
+        return 2
+    proj = load_toml(root / "project.toml")
+    local = load_toml(exp / "run.toml")
+    ecfg = proj.get("experiments", {})
+    run_cmd = local.get("run_cmd") or proj.get("stack", {}).get("run_cmd") or ""
+    if "{driver}" not in run_cmd:
+        print("exp-run: no run command with {driver}: set [stack].run_cmd in project.toml "
+              f"or run_cmd in experiments/{slug}/run.toml", file=sys.stderr)
+        return 2
+    configured = local.get("driver") or ecfg.get("driver")
+    driver = exp / (configured or "driver.py")
+    if not driver.exists():
+        cands = sorted(exp.glob("driver.*"))
+        if configured or len(cands) != 1:
+            # A configured name is never swapped for another file: the run command was
+            # chosen for that tool (e.g. `gp` must not be handed the Python example).
+            found = ", ".join(c.name for c in cands) or "none"
+            print(f"exp-run: driver {driver.relative_to(root)} not found (driver files here: "
+                  f"{found}); write it, or set driver = in experiments/{slug}/run.toml",
+                  file=sys.stderr)
+            return 2
+        driver = cands[0]
+    limits = {**DEFAULT_LIMITS[tier], **ecfg.get("limits", {}).get(tier, {}),
+              **local.get("limits", {}).get(tier, {})}
+
+    readme = exp / "README.md"
+    if tier != "smoke":
+        tie = root / "bin" / "tie-check"
+        if tie.exists() and os.access(tie, os.X_OK):
+            r = subprocess.run([str(tie), str(readme)], cwd=root, capture_output=True, text=True, timeout=60)
+            if r.returncode != 0:
+                if os.environ.get("TIE_OK") == "1":
+                    log_bypass(root, f"TIE_OK=1: exp-run {slug} --{tier} despite tie-check failure")
+                    print("exp-run: tie-check failed; proceeding because TIE_OK=1 (logged)", file=sys.stderr)
+                else:
+                    print((r.stdout + r.stderr).strip(), file=sys.stderr)
+                    print(f"exp-run: refusing a --{tier} run: the README's question tie does not pass "
+                          "bin/tie-check. Fix the tie (or smoke first, which is not gated).", file=sys.stderr)
+                    return 2
+        body = section_body(readme, "Prior art")
+        if body is not None and not body.strip():
+            print("exp-run: warning: the README's 'Prior art' section is empty; fill it before "
+                  "spending on a full run", file=sys.stderr)
+
+    ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    bundle = exp / "runs" / ts
+    n = 2
+    while bundle.exists():  # never reuse an output path
+        bundle = exp / "runs" / f"{ts}-{n}"
+        n += 1
+    bundle.mkdir(parents=True)
+    drel = driver.relative_to(root).as_posix()
+    cmd = run_cmd.replace("{driver}", shlex.quote(drel))
+    sha = git(root, "rev-parse", "HEAD")
+    dirty = git(root, "status", "--porcelain")
+    manifest = {
+        "slug": slug, "tier": tier, "note": note, "command": cmd, "driver": drel, "cwd": ".",
+        "git": {"commit": sha or "unknown", "dirty": None if dirty is None else bool(dirty)},
+        "tools": tool_versions(list(ecfg.get("version_cmds", [])), root),
+        "limits": limits, "started": now(), "status": "running",
+    }
+    mpath = bundle / "manifest.json"
+    mpath.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    env = {**os.environ, "EXP_TIER": tier, "EXP_OUT": str(bundle) + os.sep, "EXP_SLUG": slug,
+           "EXP_ROOT": str(root)}
+    gjson = bundle / ".guard.json"
+    guard = [sys.executable, str(HERE / "guard-run"), "--time", str(limits["time_s"]),
+             "--mem", str(limits["mem_mb"]), "--log", str(bundle / "output.txt"),
+             "--json", str(gjson), "--", "/bin/sh", "-c", cmd]
+    print(f"exp-run: {slug} --{tier}: {cmd}\n  bundle {bundle.relative_to(root)}/", file=sys.stderr)
+    try:
+        r = subprocess.run(guard, cwd=root, env=env, capture_output=True, text=True)
+        rc, verdict = r.returncode, r.stdout.strip() or "ERROR"
+    except KeyboardInterrupt:
+        rc, verdict = 130, "INTERRUPTED"
+    g = json.loads(gjson.read_text()) if gjson.exists() else {}
+    if gjson.exists():
+        gjson.unlink()
+    manifest.update({"finished": now(), "exit_code": rc, "status": "done" if verdict != "INTERRUPTED" else "interrupted",
+                     "guard": {"verdict": verdict, "elapsed_s": g.get("elapsed_s"),
+                               "peak_rss_mb": g.get("peak_rss_mb")}})
+
+    rpath = bundle / "result.json"
+    warnings = []
+    if not rpath.exists():
+        rpath.write_text(json.dumps({"verdict": "no-result", "params": {}, "known_answer_check": None,
+                                     "note": f"the driver wrote no result.json (watchdog: {verdict})"},
+                                    indent=2) + "\n")
+        warnings.append("driver wrote no result.json; placeholder written")
+        result = {}
+    else:
+        try:
+            result = json.loads(rpath.read_text())
+        except json.JSONDecodeError as e:
+            result = {}
+            warnings.append(f"result.json is not valid JSON: {e}")
+        missing = [k for k in REQUIRED if k not in result]
+        if missing:
+            warnings.append(f"result.json lacks required field(s) {missing}")
+    if warnings:
+        manifest["warnings"] = warnings
+    mpath.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    tail = (bundle / "output.txt").read_text(encoding="utf-8", errors="replace").splitlines()[-15:] \
+        if (bundle / "output.txt").exists() else []
+    print("\n".join("  | " + t for t in tail))
+    print(f"watchdog: {verdict} (exit {rc}, {g.get('elapsed_s')} s, peak {g.get('peak_rss_mb')} MB)")
+    print(f"verdict: {result.get('verdict', '-')}   known-answer check: {result.get('known_answer_check', '-')}")
+    for w in warnings:
+        print(f"WARNING: {w}")
+    print(f"bundle: {bundle.relative_to(root)}/  (analyze it cold later: write analysis.md there)")
+    return rc
+
+
+STUB = '''import json, os
+from pathlib import Path
+out = Path(os.environ["EXP_OUT"])
+print("stub driver, tier", os.environ["EXP_TIER"])
+(out / "result.json").write_text(json.dumps({"verdict": "PASS", "params": {"tier": os.environ["EXP_TIER"]},
+                                             "known_answer_check": "pass"}))
+'''
+
+
+def selftest() -> int:
+    checks = []
+    with tempfile.TemporaryDirectory(prefix="exp-run selftest ") as tmp:
+        root = Path(tmp)
+        (root / "project.toml").write_text(
+            f"[stack]\nrun_cmd = {json.dumps(shlex.quote(sys.executable) + ' {driver}')}\n"
+            "[experiments.limits]\nsmoke = { time_s = 60, mem_mb = 0 }\n")
+        exp = root / "experiments" / "demo"
+        exp.mkdir(parents=True)
+        tmpl = HERE.parent / "experiments" / "TEMPLATE" / "driver.py"
+        if tmpl.exists():  # test the project's real template driver when it is there
+            shutil.copy(tmpl, exp / "driver.py")
+        else:
+            (exp / "driver.py").write_text(STUB)
+        me = [sys.executable, str(Path(__file__).resolve()), "--root", str(root)]
+
+        def call(*a):
+            r = subprocess.run(me + list(a), capture_output=True, text=True, timeout=100)
+            return r.returncode, r.stdout + r.stderr
+
+        rc, out = call("demo", "--smoke")
+        bundles = sorted((exp / "runs").glob("*"))
+        ok = rc == 0 and len(bundles) == 1
+        if ok:
+            b = bundles[0]
+            m = json.loads((b / "manifest.json").read_text())
+            res = json.loads((b / "result.json").read_text())
+            ok = (m["status"] == "done" and m["exit_code"] == 0 and m["tier"] == "smoke"
+                  and "commit" in m["git"] and (b / "output.txt").exists()
+                  and all(k in res for k in REQUIRED) and "warnings" not in m)
+        checks.append(("a smoke run of the driver produces a complete bundle", ok))
+
+        # inheritance: the template's run.toml must not override [stack].run_cmd
+        tmpl_toml = HERE.parent / "experiments" / "TEMPLATE" / "run.toml"
+        if tmpl_toml.exists():
+            shutil.copy(tmpl_toml, exp / "run.toml")
+        (root / "project.toml").write_text(
+            f"[stack]\nrun_cmd = {json.dumps(shlex.quote(sys.executable) + ' -B {driver}')}\n")
+        rc, out = call("demo", "--smoke")
+        bundles = sorted((exp / "runs").glob("*"))
+        cmd = json.loads((bundles[-1] / "manifest.json").read_text())["command"] if bundles else ""
+        checks.append(("run.toml without run_cmd inherits project.toml [stack].run_cmd",
+                       rc == 0 and " -B " in cmd))
+        (exp / "run.toml").unlink(missing_ok=True)
+        for b in sorted((exp / "runs").glob("*"))[1:]:
+            shutil.rmtree(b)
+
+        (exp / "driver.py").write_text("print('forgot the result')\n")
+        rc, out = call("demo")
+        bundles = sorted((exp / "runs").glob("*"))
+        res = json.loads((bundles[-1] / "result.json").read_text()) if len(bundles) == 2 else {}
+        checks.append(("no result.json leaves a 'no-result' placeholder and a warning",
+                       res.get("verdict") == "no-result" and "WARNING" in out))
+
+        rc, out = call("TEMPLATE")
+        checks.append(("refuses to run the template itself", rc == 2))
+
+        # a configured driver that is missing is never swapped for the lone driver.py
+        (exp / "run.toml").write_text('driver = "driver.gp"\n')
+        rc, out = call("demo", "--smoke")
+        checks.append(("a missing configured driver is refused, not replaced by driver.py",
+                       rc == 2 and "driver.gp" in out and "driver.py" in out))
+        (exp / "run.toml").unlink()
+    for name, ok in checks:
+        print(("PASS " if ok else "FAIL ") + name)
+    return 0 if all(ok for _, ok in checks) else 1
+
+
+def main(argv: list[str]) -> int:
+    if argv[:1] == ["--selftest"]:
+        return selftest()
+    ap = argparse.ArgumentParser(prog="exp-run", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog=__doc__.split("\n\n", 1)[1])
+    ap.add_argument("slug", help="the experiment directory name under experiments/")
+    g = ap.add_mutually_exclusive_group()
+    for t in ("smoke", "full", "deep"):
+        g.add_argument(f"--{t}", dest="tier", action="store_const", const=t)
+    ap.add_argument("--note", default="", help="free text recorded in the manifest")
+    ap.add_argument("--root", help="project root (default: this script's ../)")
+    args = ap.parse_args(argv)
+    root = Path(args.root).resolve() if args.root else HERE.parent
+    return run(root, args.slug, args.tier or "smoke", args.note)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

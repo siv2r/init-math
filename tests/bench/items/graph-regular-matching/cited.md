@@ -1,0 +1,1 @@
+- Tutte's 1-factor theorem (Diestel, Graph Theory, 5th ed., Thm 2.2.1): a graph G has a perfect matching (1-factor) if and only if q(G - S) <= |S| for all S contained in V(G), where q(H) denotes the number of odd components of H.

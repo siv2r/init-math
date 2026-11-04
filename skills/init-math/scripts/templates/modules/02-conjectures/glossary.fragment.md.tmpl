@@ -1,0 +1,19 @@
+## Conjecture ledger
+
+- **conjecture ledger**: the folder `wiki/conjectures/`, one file per conjecture (`CNNN-slug.md`) with its status, the questions it serves, dated evidence and next steps.
+- **family**: the named set of objects or parameter range a conjecture is about (`family:` in its file). A result checked on one family is a conjecture about the others.
+- **question-tie (conjecture field)**: the one sentence in a conjecture's frontmatter saying what a verdict on it would change in the linked question's answer.
+- **open**: a conjecture's status when stated, with no evidence yet.
+- **testing**: a check is gathering evidence on the conjecture now.
+- **weakly-supported**: passed a narrow check only (one sub-family, a small range, one mechanism); not safe to build on.
+- **supported**: survived a broad check across the relevant variety of cases; believed, not proved.
+- **scope-tight**: holds within its stated scope, and widening the scope is known to break it.
+- **refuted**: a counterexample was found and recorded. The file is kept: a refutation is a result.
+- **proved**: settled by a proof, the project's own or a cited one.
+- **settled**: any of `supported`, `proved`, `scope-tight`. Settled is not done: the conjecture usually still has next steps.
+- **residue**: a next step on a conjecture, written as a line starting `@residue:` in its file. `bin/residues` lists them across all statuses; that list is the backlog.
+- **@priority**: a line only the owner decides on (written by the owner, or by an agent the owner asks) in a conjecture file (with an `activated-by:` line) to move it to the front of the backlog.
+- **parked by construction**: a conjecture that links no active question. It stays in the ledger and gets no work until one of its questions is activated.
+- **finding**: any result you record or report: a measured verdict, a proof, a negative result, or a conjecture status change to `weakly-supported`, `supported`, `scope-tight`, `proved` or `refuted`. Stating it in a message counts.{{#if modules.gates}} Findings go through the review gates before they are promoted or committed.{{/if}}
+- **@assumes line**: `@assumes: <id> — <claim> — argued (<labels>)` in a file that builds on an argued claim or an open premise; `bin/residues --assumes` lists them, and the list shrinks only when a claim is proved, refuted or no longer used.
+- **owner-override / conditional-on**: lines in a conjecture file. `owner-override:` records the owner's decision to set a status above weakly-supported on argued evidence alone; `conditional-on:` names the open premise a `proved` status rests on.{{#if modules.gates}} `owner-decision:` (from the gate chain) records any other decision of the owner's, such as one settling a disagreement between reviewers; it does not stand in for `owner-override:`.{{/if}}

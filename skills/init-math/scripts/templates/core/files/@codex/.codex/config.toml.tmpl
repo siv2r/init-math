@@ -1,0 +1,37 @@
+# Project settings for Codex. Codex reads this file only once you have trusted the project
+# folder (it asks the first time you run `codex` here).
+
+# The main thread plans and writes everything durable, so it runs on the strong tier (see
+# docs/OWNER.md, "Models"). Without this line it runs on Codex's default model.
+model = {{toml.tiers.strong}}
+
+# Compact the conversation once it holds this many tokens, even if the model's window is
+# larger: past this point each turn costs more and the main thread steers worse, while the
+# project keeps its state on disk. A starting value: lower it to compact sooner (see
+# docs/OWNER.md, "Models").
+model_auto_compact_token_limit = {{harness.auto_compact_tokens}}
+{{#if codex.git_commits}}
+#
+# Codex's standard sandbox ("workspace-write") lets agents edit files in this project but
+# keeps .git read-only, so `git commit` fails. This profile is the same sandbox with .git
+# writable, so agents can commit. .codex and .agents (agent and skill definitions) stay
+# read-only. To require your approval for every commit again, delete everything below.
+# A `-s`/`--sandbox` flag on the command line replaces this profile.
+# (Codex CLI 0.161; docs: learn.chatgpt.com/docs/permissions.md)
+
+default_permissions = "project-git"
+
+[permissions.project-git]
+description = "Workspace write, plus a writable .git so agents can commit."
+extends = ":workspace"
+
+[permissions.project-git.filesystem.":workspace_roots"]
+".git" = "write"
+".codex" = "read"
+".agents" = "read"
+{{else}}
+#
+# Agents run in Codex's standard sandbox, which keeps .git read-only: every `git commit`
+# needs your approval, and unattended `codex exec` runs cannot commit. To let agents commit,
+# see docs/OWNER.md ("Letting agents commit").
+{{/if}}

@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""cache: look up and record computed values, de-duplicated on a canonical key.
+
+    bin/cache lookup <key...> [--quantity Q]   every known value for that object
+    bin/cache append <table.tsv> <key...> <quantity> <value> <provenance> [--force]
+    bin/cache coverage                          rows and distinct objects per table
+    bin/cache --selftest
+
+selftest: yes
+
+Tables are tab-separated files with a header row: the key columns from project.toml
+[cache].key_columns, then quantity, value, provenance, date. Lookups read the union of
+cache/results/*.tsv and every experiments/*/results-catalog.tsv (per-experiment shards, so
+concurrent runs never edit one file). Keys are compared after the optional
+[cache].canonicalizer command reduces them to one standard form.
+
+Exit codes: 0 found / written, 1 nothing found, 2 usage error, 3 conflict, 4 the
+canonicalizer failed. The project root is the script's ../ unless --root or the CACHE_ROOT
+environment variable says otherwise.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import json
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+FIXED = ["quantity", "value", "provenance", "date"]
+
+
+def project_root(arg: str | None) -> Path:
+    if arg:
+        return Path(arg).resolve()
+    if os.environ.get("CACHE_ROOT"):
+        return Path(os.environ["CACHE_ROOT"]).resolve()
+    return Path(__file__).resolve().parent.parent
+
+
+def settings(root: Path) -> tuple[list[str], str]:
+    p = root / "project.toml"
+    cfg = {}
+    if p.exists():
+        with open(p, "rb") as f:
+            cfg = tomllib.load(f).get("cache", {})
+    keys = list(cfg.get("key_columns") or ["object"])
+    return keys, str(cfg.get("canonicalizer") or "")
+
+
+def tables(root: Path) -> list[Path]:
+    out = sorted((root / "cache" / "results").glob("*.tsv"))
+    out += sorted((root / "experiments").glob("*/results-catalog.tsv"))
+    return out
+
+
+def read_table(path: Path, keys: list[str]) -> list[dict]:
+    """Rows as dicts (by column NAME, never by position). Bad rows are reported, skipped."""
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines:
+        return []
+    header = lines[0].split("\t")
+    missing = [c for c in keys + FIXED[:3] if c not in header]
+    if missing:
+        print(f"warning: {path}: header lacks {missing}; table skipped", file=sys.stderr)
+        return []
+    rows = []
+    for n, line in enumerate(lines[1:], start=2):
+        if not line.strip() or line.startswith("#"):
+            continue
+        cells = line.split("\t")
+        if len(cells) != len(header):
+            print(f"warning: {path}:{n}: {len(cells)} cells, header has {len(header)}; skipped",
+                  file=sys.stderr)
+            continue
+        row = dict(zip(header, cells))
+        row["_table"], row["_line"] = path, n
+        rows.append(row)
+    return rows
+
+
+def canonical(keys_rows: list[tuple[str, ...]], cmd: str) -> list[tuple[str, ...]]:
+    """Canonical form of each key tuple, in order (one canonicalizer call for all)."""
+    plain = [tuple(c.strip() for c in k) for k in keys_rows]
+    if not cmd or not plain:
+        return plain
+    data = "".join("\t".join(k) + "\n" for k in plain)
+    r = subprocess.run(["/bin/sh", "-c", cmd], input=data, capture_output=True, text=True,
+                       timeout=300)
+    out = r.stdout.splitlines()
+    if r.returncode != 0 or len(out) != len(plain):
+        print(f"cache: canonicalizer failed (rc={r.returncode}, {len(out)} lines for "
+              f"{len(plain)} keys): {r.stderr.strip()[:300]}", file=sys.stderr)
+        sys.exit(4)  # distinct from 1 (a miss), so a broken canonicalizer never looks like one
+    return [tuple(c.strip() for c in line.split("\t")) for line in out]
+
+
+def all_rows(root: Path, keys: list[str], cmd: str) -> list[dict]:
+    rows = [r for t in tables(root) for r in read_table(t, keys)]
+    canon = canonical([tuple(r[k] for k in keys) for r in rows], cmd)
+    for r, c in zip(rows, canon):
+        r["_key"] = c
+    return rows
+
+
+def rel(root: Path, p: Path) -> str:
+    try:
+        return p.relative_to(root).as_posix()
+    except ValueError:
+        return str(p)
+
+
+def cmd_lookup(root: Path, args) -> int:
+    keys, cmd = settings(root)
+    if len(args.key) != len(keys):
+        print(f"cache: lookup needs {len(keys)} key value(s) for {keys}", file=sys.stderr)
+        return 2
+    want = canonical([tuple(args.key)], cmd)[0]
+    hits = [r for r in all_rows(root, keys, cmd) if r["_key"] == want
+            and (not args.quantity or r["quantity"] == args.quantity)]
+    if not hits:
+        print("no cached value", file=sys.stderr)
+        return 1
+    seen, by_q = set(), {}
+    for r in hits:
+        sig = (r["quantity"], r["value"])
+        by_q.setdefault(r["quantity"], set()).add(r["value"])
+        if sig in seen:
+            continue  # duplicate row (e.g. the same value in two tables): show once
+        seen.add(sig)
+        print("\t".join([r["quantity"], r["value"], r["provenance"], r.get("date", ""),
+                         f"{rel(root, r['_table'])}:{r['_line']}"]))
+    conflicts = sorted(q for q, vals in by_q.items() if len(vals) > 1)
+    for q in conflicts:
+        print(f"CONFLICT: {q} has {len(by_q[q])} different values for this key", file=sys.stderr)
+    return 3 if conflicts else 0
+
+
+def cmd_append(root: Path, args) -> int:
+    keys, cmd = settings(root)
+    need = len(keys) + 3
+    if len(args.fields) != need:
+        print(f"cache: append needs {need} fields: {keys + FIXED[:3]}", file=sys.stderr)
+        return 2
+    kvals, (qty, val, prov) = args.fields[:len(keys)], args.fields[len(keys):]
+    if any("\t" in f or "\n" in f for f in args.fields):
+        print("cache: fields may not contain tabs or newlines", file=sys.stderr)
+        return 2
+    key = canonical([tuple(kvals)], cmd)[0]
+    target = (root / args.table) if not Path(args.table).is_absolute() else Path(args.table)
+    same = [r for r in all_rows(root, keys, cmd) if r["_key"] == key and r["quantity"] == qty]
+    if any(r["value"] == val for r in same) and not args.force:
+        print("already cached (identical value); nothing written")
+        return 0
+    clash = [r for r in same if r["value"] != val]
+    if clash and not args.force:
+        for r in clash:
+            print(f"CONFLICT: {rel(root, r['_table'])}:{r['_line']} has {qty} = {r['value']!r}, "
+                  f"not {val!r}. Find out which is right; --force replaces it in {args.table}.",
+                  file=sys.stderr)
+        return 3
+    date = _dt.date.today().isoformat()
+    new_line = "\t".join(list(key) + [qty, val, prov, date])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.exists() or not target.read_text(encoding="utf-8").strip():
+        target.write_text("\t".join(keys + FIXED) + "\n", encoding="utf-8")
+    lines = target.read_text(encoding="utf-8").splitlines()
+    header = lines[0].split("\t")
+    if header[:len(keys)] != keys:
+        print(f"cache: {args.table} has columns {header}, expected keys {keys} first", file=sys.stderr)
+        return 2
+    if args.force:  # drop this key+quantity from the target table, then write the new row
+        mine = {r["_line"] for r in same if r["_table"] == target}
+        lines = [ln for i, ln in enumerate(lines, start=1) if i not in mine]
+        for r in same:
+            if r["_table"] != target and r["value"] != val:
+                print(f"warning: {rel(root, r['_table'])}:{r['_line']} still holds {r['value']!r}",
+                      file=sys.stderr)
+    lines.append(new_line)
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"appended to {rel(root, target)}")
+    return 0
+
+
+def cmd_coverage(root: Path, args) -> int:
+    keys, cmd = settings(root)
+    rows = all_rows(root, keys, cmd)
+    if not rows:
+        print("cache is empty")
+        return 0
+    by_t: dict[str, list[dict]] = {}
+    for r in rows:
+        by_t.setdefault(rel(root, r["_table"]), []).append(r)
+    for t, rs in sorted(by_t.items()):
+        qs = sorted({r["quantity"] for r in rs})
+        print(f"{t}: {len(rs)} rows, {len({r['_key'] for r in rs})} objects, quantities: {', '.join(qs)}")
+    print(f"total: {len(rows)} rows, {len({r['_key'] for r in rows})} distinct objects")
+    return 0
+
+
+def selftest() -> int:
+    with tempfile.TemporaryDirectory(prefix="cache selftest ") as tmp:
+        root = Path(tmp)
+        canon = root / "canon.py"  # canonical key: the two key values in sorted order
+        canon.write_text("import sys\nfor line in sys.stdin:\n"
+                         "    print('\\t'.join(sorted(line.rstrip('\\n').split('\\t'))))\n")
+        (root / "project.toml").write_text(
+            '[cache]\nkey_columns = ["a", "b"]\n'
+            f"canonicalizer = {json.dumps(shlex.quote(sys.executable) + ' ' + shlex.quote(str(canon)))}\n")
+        me = [sys.executable, str(Path(__file__).resolve()), "--root", str(root)]
+
+        def run(*a):
+            r = subprocess.run(me + list(a), capture_output=True, text=True, timeout=60)
+            return r.returncode, r.stdout + r.stderr
+
+        checks = []
+        rc, out = run("append", "cache/results/demo.tsv", "3", "1", "order", "6", "hand")
+        checks.append(("first append writes", rc == 0 and "appended" in out))
+        rc, out = run("append", "cache/results/demo.tsv", "1", "3", "order", "6", "rerun")
+        data = (root / "cache/results/demo.tsv").read_text().splitlines()
+        checks.append(("same object, other spelling, same value: no-op",
+                       rc == 0 and "nothing written" in out and len(data) == 2))
+        shard = root / "experiments/e1/results-catalog.tsv"
+        shard.parent.mkdir(parents=True)
+        shard.write_text("a\tb\tquantity\tvalue\tprovenance\tdate\n1\t3\torder\t6\te1\t2026-01-01\n")
+        rc, out = run("lookup", "3", "1")
+        checks.append(("lookup unions the shard and shows a duplicate once",
+                       rc == 0 and out.count("order\t6") == 1))
+        rc, out = run("append", "cache/results/demo.tsv", "1", "3", "order", "7", "bad")
+        checks.append(("conflicting value refused", rc == 3 and "CONFLICT" in out))
+        shard.write_text(shard.read_text() + "3\t1\torder\t7\te1\t2026-01-02\n")
+        rc, out = run("lookup", "1", "3")
+        checks.append(("lookup reports a conflict across tables", rc == 3 and "CONFLICT" in out))
+        rc, out = run("lookup", "9", "9")
+        checks.append(("miss exits 1", rc == 1))
+        rc, out = run("coverage")
+        checks.append(("coverage counts objects", rc == 0 and "1 distinct objects" in out))
+        (root / "project.toml").write_text('[cache]\nkey_columns = ["a", "b"]\ncanonicalizer = "exit 5"\n')
+        rc, out = run("lookup", "1", "3")
+        checks.append(("a failing canonicalizer exits 4, not 1", rc == 4 and "canonicalizer failed" in out))
+    bad = [n for n, ok in checks if not ok]
+    for n, ok in checks:
+        print(("PASS " if ok else "FAIL ") + n)
+    return 1 if bad else 0
+
+
+def main(argv: list[str]) -> int:
+    if "--selftest" in argv:
+        return selftest()
+    ap = argparse.ArgumentParser(prog="cache", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog=__doc__.split("\n\n", 1)[1])
+    ap.add_argument("--root", help="project root (default: this script's ../)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    lk = sub.add_parser("lookup", help="every cached value for one object")
+    lk.add_argument("key", nargs="+")
+    lk.add_argument("--quantity")
+    apd = sub.add_parser("append", help="add one value (no-op if identical, refused if conflicting)")
+    apd.add_argument("table", help="e.g. cache/results/<name>.tsv")
+    apd.add_argument("fields", nargs="+", help="key values, then quantity, value, provenance")
+    apd.add_argument("--force", action="store_true", help="replace a conflicting row in TABLE")
+    sub.add_parser("coverage", help="rows and distinct objects per table")
+    args = ap.parse_args(argv)
+    root = project_root(args.root)
+    return {"lookup": cmd_lookup, "append": cmd_append, "coverage": cmd_coverage}[args.cmd](root, args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

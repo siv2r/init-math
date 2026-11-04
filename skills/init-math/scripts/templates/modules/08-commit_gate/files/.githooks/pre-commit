@@ -1,0 +1,485 @@
+#!/usr/bin/env python3
+"""Commit gate: refuse a finding-bearing commit whose files were not reviewed as staged.
+
+Installed by `bin/setup-hooks` (git config core.hooksPath .githooks). Policy is the
+[gates] table in project.toml. For every staged file it decides which reviewers the change
+requires:
+
+  * a [[gates.rules]] entry whose `paths` match the file and, if the rule lists `status`,
+    whose frontmatter `status:` changed to one of them (new files count as a change); an
+    optional `when` / `unless` regex (matched per line against the staged file) narrows it,
+    e.g. `unless = "^settled-by:"` for a proof that is not just a cited result;
+    a rule with no `status` fires on any staged change to a matching file; a rule's
+    optional `last_look` lists reviewers whose last look (a stamp of kind `last-look`) is
+    needed too;
+  * [gates.proof]: a changed line (added or removed) inside a proof block in a matching
+    file: `\\begin{proof}`…`\\end{proof}`, or a line starting "Proof." up to an
+    end-of-proof mark or the next heading.
+
+A file moved with its content unchanged (git rename, 100% similar) requires no reviewer.
+
+Each required reviewer needs, for the STAGED content of the file (its git blob id):
+a row in .gates/dispatches.jsonl (the reviewer was sent this text) and a passing stamp in
+.gates/stamps.jsonl (bin/gate-stamp). A last-look stamp answers one question and never
+counts as the reviewer's review; a review or an exchange does. Otherwise the commit is refused, naming each
+missing, stale, or stamp-without-dispatch case and what to do.
+
+`refuse = "always"` (default) refuses every time; `"once"` refuses once per distinct set
+of problems and lets an identical retry through. If bin/question-check exists, it runs
+too and any FAIL refuses the commit (owner levers: question activation, @priority; and
+broken question or ledger files); its several-active-questions WARN is shown, not enforced.
+
+Owner bypass: GATE_OK=1 git commit ... — allowed for the owner, logged to
+logs/feedback.jsonl as {kind: bypass}. Agents must not use it. `git commit --no-verify`
+skips all hooks and is likewise the owner's.
+
+It also warns (never refuses) when the agent harness has never run the project's hooks in
+this copy (a sign the agent is started outside this folder or its hooks are untrusted), and
+when a git-ignored scratch/ folder holds a manuscript or a week-old file, which no commit
+saves.
+
+If this script itself crashes, it lets the commit through (fails open) with a WARNING and
+a traceback in logs/state/hook-errors.log. Explained in docs/discipline/commit-gate.md.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import traceback
+from pathlib import Path
+
+DEFAULT_VERDICTS = {
+    "claim-auditor": ["SOUND"], "proof-referee": ["CLEAN", "CLEAN-MINOR"], "red-team": ["SURVIVED"],
+    "cold-reader": ["SELF-CONTAINED", "SELF-CONTAINED-MINOR"], "expositor": ["READER-READY"],
+    "provenance": ["ATTRIBUTION-CLEAN"],
+}
+DEFAULT_PROOF = {
+    "paths": ["**/*.md", "**/*.tex"],
+    "exclude": ["docs/**", "logs/**", ".claude/**", ".codex/**", ".agents/**", ".gates/**",
+                "**/TEMPLATE*", "AGENTS.md", "COORDINATOR.md", "GLOSSARY.md"],
+    "start": [r"\\begin\{proof\}", r"^\s*(?:\*\*|_|\\textit\{|\\emph\{)?Proof\b"],
+    "end": [r"\\end\{proof\}", "∎", "□", r"\\qed\b", r"\\qedhere\b", r"\\square\b", r"^\s*#",
+            r"\\(?:sub)*section\b"],
+    "gates": ["proof-referee", "claim-auditor"],
+}
+STATUS_RE = re.compile(r"^status:\s*([A-Za-z-]+)", re.M)
+
+
+def git(*args: str, check: bool = False) -> tuple[int, str]:
+    r = subprocess.run(["git", *args], capture_output=True, text=True)
+    if check and r.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)}: {r.stderr.strip()}")
+    return r.returncode, r.stdout
+
+
+def glob_re(pat: str) -> re.Pattern:
+    out, i = "", 0
+    while i < len(pat):
+        if pat.startswith("**/", i):
+            out, i = out + "(?:.*/)?", i + 3
+        elif pat.startswith("**", i):
+            out, i = out + ".*", i + 2
+        elif pat[i] == "*":
+            out, i = out + "[^/]*", i + 1
+        elif pat[i] == "?":
+            out, i = out + "[^/]", i + 1
+        else:
+            out, i = out + re.escape(pat[i]), i + 1
+    return re.compile(out + r"\Z")
+
+
+def matches(path: str, pats) -> bool:
+    return any(glob_re(p).match(path) for p in pats or [])
+
+
+def frontmatter_status(text: str | None) -> str | None:
+    if not text or not text.startswith("---"):
+        return None
+    end = text.find("\n---", 3)
+    m = STATUS_RE.search(text[: end if end > 0 else len(text)])
+    return m.group(1) if m else None
+
+
+def proof_lines(text: str, start, end) -> set[int]:
+    """1-based line numbers inside proof blocks (start and end lines included)."""
+    sre = [re.compile(p) for p in start]
+    ere = [re.compile(p) for p in end]
+    inside, out = False, set()
+    for n, line in enumerate(text.splitlines(), 1):
+        if not inside and any(r.search(line) for r in sre):
+            inside = True
+            out.add(n)
+            # a one-line proof ends on its own line (but a heading does not end itself)
+            rest = line
+            for r in sre:
+                rest = r.sub("", rest, count=1)
+            if any(r.search(rest) for r in ere if r.pattern != r"^\s*#"):
+                inside = False
+            continue
+        if inside:
+            if any(r.search(line) for r in ere):
+                inside = False
+                if not re.match(r"^\s*#|\\(?:sub)*section", line):
+                    out.add(n)
+                continue
+            out.add(n)
+    return out
+
+
+HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", re.M)
+
+
+def changed_lines(path: str) -> tuple[set[int], set[int]]:
+    """(old line numbers removed, new line numbers added or next to a removal)."""
+    _, diff = git("diff", "--cached", "-U0", "--no-color", "--no-ext-diff", "--", path)
+    old, new = set(), set()
+    for m in HUNK_RE.finditer(diff):
+        os_, oc = int(m.group(1)), int(m.group(2) if m.group(2) is not None else 1)
+        ns, nc = int(m.group(3)), int(m.group(4) if m.group(4) is not None else 1)
+        old.update(range(os_, os_ + oc))
+        new.update(range(ns, ns + nc) if nc else {max(ns, 1), ns + 1})
+    return old, new
+
+
+def show(spec: str) -> str | None:
+    rc, out = git("show", spec)
+    return out if rc == 0 else None
+
+
+def blob_hash(data: bytes) -> str:
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def read_rows(path: Path) -> list[dict]:
+    rows, seen = [], set()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return rows
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(r, dict):
+            key = r.get("id") or json.dumps(r, sort_keys=True)
+            if key not in seen:
+                seen.add(key)
+                rows.append(r)
+    return rows
+
+
+def line_conditions(rule: dict, text: str) -> bool:
+    """Optional `when` / `unless` regexes on a rule, matched against the staged file.
+
+    Used for "proved by citation": a `proved` rule with `unless = "^settled-by:"` needs the
+    full set of reviewers, and a second `proved` rule with `when = "^settled-by:"` needs only
+    the claim-auditor."""
+    if rule.get("when") and not re.search(rule["when"], text, re.M):
+        return False
+    if rule.get("unless") and re.search(rule["unless"], text, re.M):
+        return False
+    return True
+
+
+def pure_renames() -> set[str]:
+    """New paths of files moved with their content unchanged (git's R100): a move records no
+    finding, so it needs no review (reorganizing folders would otherwise need the owner's
+    bypass for every file with a proof in it)."""
+    _, out = git("diff", "--cached", "-M", "--name-status", "--diff-filter=R", "-z")
+    parts = [p for p in out.split("\0") if p]
+    return {parts[i + 2] for i in range(0, len(parts) - 2, 3) if parts[i] == "R100"}
+
+
+LAST = "@last-look"  # a required gate name with this suffix wants that reviewer's last look
+
+
+def requirements(cfg: dict, conf_proof: dict) -> dict[str, dict[str, list[str]]]:
+    """{path: {gate: [reasons]}} for the staged changes."""
+    _, names = git("diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z", check=True)
+    moved = pure_renames()
+    need: dict[str, dict[str, list[str]]] = {}
+
+    def add(path, gates, why):
+        for g in gates:
+            need.setdefault(path, {}).setdefault(g, []).append(why)
+
+    for path in [p for p in names.split("\0") if p and p not in moved]:
+        staged = None
+        for rule in cfg.get("rules", []) or []:
+            if not matches(path, rule.get("paths")) or matches(path, rule.get("exclude")):
+                continue
+            want = rule.get("status")
+            if not want:
+                add(path, rule.get("gates", []), "changed")
+                continue
+            staged = staged if staged is not None else (show(f":{path}") or "")
+            new = frontmatter_status(staged)
+            old = frontmatter_status(show(f"HEAD:{path}"))
+            if new and new != old and new in want and line_conditions(rule, staged):
+                add(path, rule.get("gates", []), f"status {old or '(new)'} -> {new}")
+                add(path, [g + LAST for g in rule.get("last_look", [])], f"status {old or '(new)'} -> {new}")
+        if conf_proof.get("enabled", True) and matches(path, conf_proof["paths"]) \
+                and not matches(path, conf_proof["exclude"]):
+            old_lines, new_lines = changed_lines(path)
+            staged = staged if staged is not None else (show(f":{path}") or "")
+            head = show(f"HEAD:{path}") or ""
+            hit = (new_lines & proof_lines(staged, conf_proof["start"], conf_proof["end"])) or \
+                  (old_lines & proof_lines(head, conf_proof["start"], conf_proof["end"]))
+            if hit:
+                add(path, conf_proof["gates"], f"proof edited (line {min(hit)})")
+    return need
+
+
+ENTRY_RE = re.compile(r"^\s*[-*]\s*\d{4}-\d{2}-\d{2}\b")
+ARGUED_RE = re.compile(r"^\s*(?:[-*]\s*)?`?argued:`?\s*\S")
+ASSUMES_RE = re.compile(r"^\s*(?:[-*]\s*)?`?@assumes`?:\s*\S", re.M)
+ABOVE_WEAK = ("supported", "scope-tight", "proved")
+
+
+def evidence_entries(text: str) -> list[list[str]]:
+    """The dated entries of a conjecture's `## Evidence` section, each as its lines."""
+    m = re.search(r"^## Evidence[^\n]*\n(.*?)(?=^## |\Z)", text, re.M | re.S)
+    entries: list[list[str]] = []
+    for line in (m.group(1).splitlines() if m else []):
+        if ENTRY_RE.match(line):
+            entries.append([line])
+        elif entries:
+            entries[-1].append(line)
+    return entries
+
+
+def argued_cap(conj_dir: str) -> list[str]:
+    """A status above weakly-supported resting only on
+    argued evidence needs the owner's `owner-override:` line; `proved` with an open
+    `@assumes:` line needs `conditional-on:`."""
+    _, names = git("diff", "--cached", "--name-only", "--diff-filter=ACMR", "-z")
+    out: list[str] = []
+    for path in sorted(p for p in names.split("\0") if p):
+        if not (path.startswith(conj_dir.rstrip("/") + "/") and re.search(r"/C\d{3}-[^/]*\.md$", path)):
+            continue
+        staged = show(f":{path}") or ""
+        new, old = frontmatter_status(staged), frontmatter_status(show(f"HEAD:{path}"))
+        if not new or new == old or new not in ABOVE_WEAK:
+            continue
+        entries = evidence_entries(staged)
+        if entries and all(any(ARGUED_RE.match(x) for x in e) for e in entries) \
+                and not re.search(r"^\s*(?:[-*]\s*)?owner-override:\s*\S", staged, re.M):
+            out.append(f"{path}: status -> {new} rests only on argued evidence (every entry has an "
+                       "`argued:` line). Only the owner can decide that: record their decision as "
+                       "`owner-override: <date> <their words>`, or add a non-argued check.")
+        if new == "proved" and ASSUMES_RE.search(staged) \
+                and not re.search(r"^\s*(?:[-*]\s*)?conditional-on:\s*\S", staged, re.M):
+            out.append(f"{path}: status -> proved while an `@assumes:` line is open: the proof is "
+                       "conditional. Name the premise in a `conditional-on:` line, or prove it first.")
+    return out
+
+
+def problems(root: Path, need, verdicts) -> list[str]:
+    gdir = root / ".gates"
+    stamps = read_rows(gdir / "stamps.jsonl")
+    sent = read_rows(gdir / "dispatches.jsonl")
+    out = []
+    for path, gates in sorted(need.items()):
+        _, ls = git("ls-files", "-s", "--", path)
+        blob = ls.split()[1] if ls.strip() else blob_hash((root / path).read_bytes())
+        for need_gate, why in sorted(gates.items()):
+            last = need_gate.endswith(LAST)
+            gate = need_gate.removesuffix(LAST)
+            passing = verdicts.get(gate, [])
+            mine = [s for s in stamps if s.get("gate") == gate and s.get("path") == path
+                    and str(s.get("verdict", "")).upper() in passing
+                    and (s.get("kind", "review") == "last-look") == last]
+            here = [s for s in mine if s.get("blob") == blob]
+            was_sent = any(d.get("gate") == gate and d.get("path") == path
+                           and d.get("blob") == blob for d in sent)
+            reason = "; ".join(sorted(set(why)))
+            if here and was_sent:
+                continue
+            if here:
+                out.append(f"{path}: {gate} stamp has no matching dispatch ({reason}). "
+                           f"Dispatch {gate} on the staged text, then re-stamp.")
+            elif mine:
+                what = "last look" if last else "stamp"
+                out.append(f"{path}: {gate} {what} is stale: the file changed after review "
+                           f"({reason}). Re-dispatch {gate} on the staged text, then stamp.")
+            elif last:
+                out.append(f"{path}: needs a passing {gate} last look ({reason}): a fresh brief "
+                           f"that opens LAST LOOK and names {path} (the gate-chain skill), then "
+                           f"bin/gate-stamp --kind last-look.")
+            else:
+                out.append(f"{path}: needs a passing {gate} review ({reason}). Dispatch it "
+                           f"with {path} named in the brief, then run bin/gate-stamp.")
+    return out
+
+
+def seen_once(root: Path, key: str) -> bool:
+    d = root / "logs" / "state"
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / "commit-gate.seen"
+    h = hashlib.sha256(key.encode()).hexdigest()[:16]
+    try:
+        seen = set(f.read_text().split())
+    except FileNotFoundError:
+        seen = set()
+    if h in seen:
+        return True
+    with open(f, "a") as fh:
+        fh.write(h + "\n")
+    return False
+
+
+def log_bypass(root: Path, text: str) -> None:
+    d = root / "logs"
+    d.mkdir(exist_ok=True)
+    rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "kind": "bypass", "text": text[:1000],
+           "source": "commit-gate"}
+    with open(d / "feedback.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, sort_keys=True) + "\n")
+
+
+def hooks_never_ran(root: Path, min_commits: int) -> str | None:
+    """A warning if this copy has at least `min_commits` commits but the harness has never
+    run one of its hooks here (hooks/_payload.py writes logs/state/harness-hooks-seen), else None."""
+    if (root / "logs" / "state" / "harness-hooks-seen").exists():
+        return None
+    try:
+        r = subprocess.run(["git", "-C", str(root), "rev-list", "--count", "HEAD"],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0 or int(r.stdout.strip() or 0) < min_commits:
+            return None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return ("the agent harness has never run this project's hooks in this copy, although work "
+            "has been committed. The agent is probably being started outside this folder (a "
+            "folder above it, the Windows side, a chat that was already open), or Codex's hooks "
+            "are not trusted (type /hooks in Codex). Until then the project's skills, automatic "
+            f"checks, reviewers and model settings are not in effect. Restart the agent here "
+            f"(cd {root}, then start it) and have it run bin/doctor.")
+
+
+def scratch_at_risk(root: Path, now: float, stale_days: int = 7) -> list[str]:
+    """Files in git-ignored scratch/ folders that look worth keeping: a manuscript (.tex,
+    .bib) or anything untouched for a week. git ignores scratch/, so they are in no commit
+    (a trial run kept every paper draft there)."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--ignored",
+                            "--exclude-standard", "-z"], capture_output=True, text=True,
+                           timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    out = []
+    for rel in sorted(p for p in r.stdout.split("\0") if p and "scratch" in Path(p).parts):
+        f = root / rel
+        try:
+            old = now - f.stat().st_mtime > stale_days * 86400
+        except OSError:
+            continue
+        if f.suffix in (".tex", ".bib") or old:
+            out.append(rel)
+    return out
+
+
+def main() -> int:
+    import tomllib
+    _, top = git("rev-parse", "--show-toplevel", check=True)
+    root = Path(top.strip())
+    never = hooks_never_ran(root, 1)  # runs before the commit; the first one is never gated
+    if never:
+        print(f"WARNING (commit gate): {never}", file=sys.stderr)
+    risky = scratch_at_risk(root, time.time())
+    if risky:
+        shown = ", ".join(risky[:5]) + (f" and {len(risky) - 5} more" if len(risky) > 5 else "")
+        print(f"WARNING (commit gate): {len(risky)} file(s) in git-ignored scratch/ folders look "
+              f"worth keeping and are in no commit: {shown}. Move a manuscript to writeups/ or "
+              "its work folder; delete what is truly throwaway.", file=sys.stderr)
+    try:
+        with open(root / "project.toml", "rb") as f:
+            full = tomllib.load(f)
+    except FileNotFoundError:
+        full = {}
+    cfg = full.get("gates", {})
+    if not cfg.get("enabled", True):
+        return 0
+    verdicts = {k: [str(x).upper() for x in v] for k, v in (cfg.get("verdicts") or {}).items()}
+    verdicts = verdicts or DEFAULT_VERDICTS
+    proof = {**DEFAULT_PROOF, **(cfg.get("proof") or {})}
+    found = problems(root, requirements(cfg, proof), verdicts)
+    found += argued_cap(str(full.get("conjectures", {}).get("dir", "wiki/conjectures")))
+
+    qc = root / "bin" / "question-check"
+    if qc.is_file() and os.access(qc, os.X_OK):
+        r = subprocess.run([str(qc)], capture_output=True, text=True, cwd=root)
+        # The several-active-questions reminder is shown, never enforced: it matters right
+        # after a change of direction, when nobody runs question-check by hand.
+        for ln in r.stdout.splitlines():
+            if ln.startswith("WARN") and "questions are active" in ln:
+                print(f"commit gate: {ln}", file=sys.stderr)
+        if r.returncode != 0:
+            fails = [ln for ln in (r.stdout + r.stderr).splitlines() if "FAIL" in ln][:10]
+            found.append("bin/question-check failed (owner levers, question links):\n    "
+                         + "\n    ".join(fails or ["(run bin/question-check for detail)"]))
+
+    # The attempt ledger's flags and lint, when the project has the ledger: shown, never
+    # enforced (a hand-edited record or an overdue stall audit is caught at the latest here).
+    ledger = root / "bin" / "attempts"
+    if ledger.is_file() and os.access(ledger, os.X_OK):
+        for args in (["--gate"], ["--check"]):
+            r = subprocess.run([str(ledger), *args], capture_output=True, text=True, cwd=root)
+            lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+            if args == ["--check"]:
+                lines = lines[:-1][:8] if r.returncode != 0 else []
+            for ln in lines:
+                print(f"commit gate: {ln}", file=sys.stderr)
+    # Hedges, assumptions and argued verdicts in the staged changes: shown, never enforced
+    # A removed "heuristically" or @assumes line is worth a look.
+    hedges = root / "bin" / "hedge-scan"
+    if hedges.is_file() and os.access(hedges, os.X_OK):
+        r = subprocess.run([sys.executable, str(hedges), "--diff"], capture_output=True, text=True, cwd=root)
+        for ln in r.stdout.splitlines()[:12]:
+            if ln.strip():
+                print(f"commit gate: {ln.strip()}", file=sys.stderr)
+    if not found:
+        return 0
+    msg = "\n".join(f"  - {p}" for p in found)
+    if os.environ.get("GATE_OK") == "1":
+        log_bypass(root, msg)
+        print(f"commit gate: bypassed with GATE_OK=1 (logged to logs/feedback.jsonl):\n{msg}",
+              file=sys.stderr)
+        return 0
+    if str(cfg.get("refuse", "always")) == "once" and seen_once(root, msg):
+        print(f"commit gate: proceeding on retry (refuse = \"once\"):\n{msg}", file=sys.stderr)
+        return 0
+    print("commit gate: refused. This commit records a finding, and the staged text is not "
+          "ready:\n" + msg + "\n\nWhy: a finding is committed only after the "
+          "reviewers saw the exact text being committed. How: the gate-chain skill and "
+          "docs/discipline/commit-gate.md.", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    if sys.version_info < (3, 11):
+        print("WARNING: commit gate needs Python >= 3.11; skipped.", file=sys.stderr)
+        sys.exit(0)
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception:
+        tb = traceback.format_exc()
+        print("WARNING: the commit gate crashed and was skipped (failing open). "
+              "Traceback in logs/state/hook-errors.log", file=sys.stderr)
+        try:
+            _, top = git("rev-parse", "--show-toplevel")
+            d = Path(top.strip() or ".") / "logs" / "state"
+            d.mkdir(parents=True, exist_ok=True)
+            with open(d / "hook-errors.log", "a") as f:
+                f.write(f"--- {time.strftime('%Y-%m-%dT%H:%M:%S')} pre-commit\n{tb}\n")
+        except OSError:
+            print(tb, file=sys.stderr)
+        sys.exit(0)

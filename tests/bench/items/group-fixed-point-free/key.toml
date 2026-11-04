@@ -1,0 +1,15 @@
+kind = "flawed"
+error_class = "statement perturbation: order 2 nudged to order 3, via an expansion that does not yield the commutation"
+location = "the step 'apply (2) to the product gh ... Rewriting sigma(g) and sigma(h) on both sides ... and cancelling, this reduces to h sigma(g) = sigma(g) h'"
+catch = "names that step as unjustified or false: the identity for gh, rewritten with (1) and (2), does not give that h commutes with sigma(g) (if anything the implication runs the other way); ideally gives the counterexample: the group of 3x3 upper unitriangular matrices over F4 (order 64) with sigma = conjugation by diag(1, w, w^2), w a generator of F4*, which is fixed-point-free of order 3 and satisfies (1) and (2) but is not abelian"
+audited = "2026-10-28, Claude Fable 5.1: Heisenberg group over F4 with sigma(x,y,z) = (x/w, y/w, z/w^2) enumerated: automorphism, order 3, fixed-point-free, nonabelian, (1) and (2) hold for all 64 elements, h sigma(g) = sigma(g) h fails for 2880 pairs; derivation of (1), (2) re-checked"
+# The statement is FALSE. True neighbour: a fixed-point-free automorphism of order 2 forces G
+# abelian (it is inversion). For order 3 one only gets nilpotent of class <= 2 (Burnside).
+# Verified in Sage by brute force on U = {(x,y,z)} over GF(4) with (x,y,z)(x',y',z') =
+# (x+x', y+y', z+z'+x*y'), sigma(x,y,z) = (x/w, y/w, z/w^2): sigma is an automorphism,
+# sigma^3 = id, the only fixed point is the identity, |U| = 64, U is nonabelian, (1) and (2)
+# hold for all 64 elements, and 2880 of the 4096 pairs (g,h) have g sigma(h) != sigma(h) g,
+# e.g. g = (0,w,0), h = (w,0,0).
+# Smallest counterexample: order 64, argued not computed (Burnside: class <= 2; 2-groups need G/Phi of even rank >= 4 and |G'| >= 4 for
+# the action to be fixed-point-free; odd p-groups give 7^3 = 343 or larger).
+# Steps (1) and (2) and the bijection argument are correct.

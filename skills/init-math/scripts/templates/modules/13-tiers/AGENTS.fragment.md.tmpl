@@ -1,0 +1,8 @@
+## Model tiers and workers
+
+{{#if view.coordinator}}
+- **Direction and review: strong tier ({{tiers.strong}}). Execution: workers ({{tiers.worker}}).** Dispatch a whole brick, not a one-line fix.
+- **A worker ends DONE, PARTIAL or NEED-DIRECTION** and hands back at an escalation trigger (3 failed attempts at one goal, an error unchanged after 2, a route choice, a known-answer check still failing after 1 fix attempt; full list: docs/discipline/tiers.md), never judging its own stuckness.
+- **The coordinator owns every long job** (anything over about two minutes: a full build, a sweep, a probe); a worker validates on a seconds-scale case and returns the command.
+- Triggers, briefs, best-of-n: [docs/discipline/tiers.md](docs/discipline/tiers.md).
+{{/if}}

@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+"""guard-run: run one command under a wall-time and memory watchdog.
+
+    bin/guard-run [--time S] [--mem MB] [--sample S] [--log FILE] [--json FILE] -- cmd ...
+    bin/guard-run --selftest
+
+selftest: yes
+
+The command's output goes to a log file, never to stdout. stdout carries exactly one
+verdict token, so a caller (or an agent) can read the outcome without flooding its context:
+
+    OK            the command exited 0
+    FAILED        the command exited non-zero on its own
+    TIMEOUT       wall time exceeded --time; the whole process tree was killed   (exit 124)
+    EXPLODED-mem  resident memory of the tree exceeded --mem; tree killed       (exit 137)
+    INTERRUPTED   guard-run itself was interrupted; tree killed                  (exit 130)
+    ERROR         the command could not be started                               (exit 127)
+
+Otherwise guard-run exits with the command's own exit code. Memory is the summed resident
+size of the command and all its descendants, sampled with `ps` (macOS and Linux; on a Linux box without `ps` it reads /proc), because a
+per-process `ulimit` does not reliably cap child processes or every runtime. If neither
+is readable (some sandboxes forbid running `ps`, and macOS has no /proc), the memory
+limit cannot be enforced: guard-run says so on stderr, in the log and in --json
+(`mem_enforced: false`), and only the time limit protects the run.
+
+Defaults come from the environment: TIME_LIMIT_S, MEM_LIMIT_MB (0 = no limit), SAMPLE_S
+(default 0.5). The log path is printed on stderr. Start with SMALL limits: a misjudged run
+should die in seconds, not after an hour.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+
+_WARNED_NO_RSS = False
+NO_RSS_REASON = "cannot read process memory here (`ps` unavailable or blocked by a sandbox, and no /proc)"
+
+
+def _ps_kb(field: str) -> int | None:
+    """An RSS column in KB. BusyBox `ps` (Alpine) abbreviates large values as `200m`, `1g`."""
+    mult = {"k": 1, "m": 1024, "g": 1024 ** 2, "t": 1024 ** 3}
+    f = field.lower()
+    try:
+        if f and f[-1] in mult:
+            return int(float(f[:-1]) * mult[f[-1]])
+        return int(f)
+    except ValueError:
+        return None
+
+
+def _proc_table(proc: Path = Path("/proc"), use_ps: bool = True) -> list[tuple[int, int, int]]:
+    """(pid, ppid, rss_kb) for every process: `ps`, else Linux /proc, else []."""
+    try:
+        if not use_ps:
+            raise OSError("ps disabled")
+        out = subprocess.run(["ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "rss="],
+                             capture_output=True, text=True, timeout=10).stdout
+        rows = []
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) == 3 and parts[0].isdigit() and parts[1].isdigit():
+                kb = _ps_kb(parts[2])
+                if kb is not None:
+                    rows.append((int(parts[0]), int(parts[1]), kb))
+        if rows:
+            return rows
+    except (OSError, subprocess.SubprocessError):
+        pass
+    rows = []  # no `ps` (e.g. a slim container): read /proc directly
+    if proc.is_dir():
+        for d in proc.iterdir():
+            if not d.name.isdigit():
+                continue
+            try:
+                stat = (d / "stat").read_text()
+                ppid = int(stat[stat.rindex(")") + 2:].split()[1])
+                kb = 0
+                for line in (d / "status").read_text().splitlines():
+                    if line.startswith("VmRSS:"):
+                        kb = int(line.split()[1])
+                rows.append((int(d.name), ppid, kb))
+            except (OSError, ValueError, IndexError):
+                continue
+    return rows
+
+
+def tree_rss_kb(root_pid: int) -> tuple[int, list[int]]:
+    """Summed RSS (KB) of root_pid and its descendants, and their pids."""
+    global _WARNED_NO_RSS
+    table = _proc_table()
+    if not table and not _WARNED_NO_RSS:
+        _WARNED_NO_RSS = True
+        print(f"guard-run: WARNING: {NO_RSS_REASON}; the memory limit is NOT enforced for this run",
+              file=sys.stderr)
+    kids: dict[int, list[int]] = {}
+    rss: dict[int, int] = {}
+    for pid, ppid, kb in table:
+        kids.setdefault(ppid, []).append(pid)
+        rss[pid] = kb
+    seen, stack = [], [root_pid]
+    while stack:
+        p = stack.pop()
+        if p in seen:
+            continue
+        seen.append(p)
+        stack += kids.get(p, [])
+    return sum(rss.get(p, 0) for p in seen), seen
+
+
+def kill_tree(proc: subprocess.Popen) -> None:
+    _, pids = tree_rss_kb(proc.pid)
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)  # the child leads its own process group
+    except (ProcessLookupError, PermissionError):
+        pass
+    for p in pids:  # descendants that left the group
+        try:
+            os.kill(p, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def guard(cmd: list[str], time_s: float, mem_mb: float, sample_s: float, log: Path,
+          json_out: Path | None) -> int:
+    log.parent.mkdir(parents=True, exist_ok=True)
+    if mem_mb:
+        tree_rss_kb(os.getpid())  # warns now, not at the first sample, if memory is unreadable
+    t0 = time.time()
+    verdict, rc, peak_kb = "", 0, 0
+    with open(log, "a", encoding="utf-8") as fh:
+        fh.write(f"# guard-run: {json.dumps(cmd)} time_s={time_s or 'none'} mem_mb={mem_mb or 'none'} "
+                 f"start={time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
+        fh.flush()
+        try:
+            proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                    start_new_session=True)
+        except OSError as e:
+            fh.write(f"# could not start: {e}\n")
+            verdict, rc = "ERROR", 127
+            proc = None
+        interrupted = []
+
+        def on_signal(signum, _frame):
+            interrupted.append(signum)
+
+        old = {s: signal.signal(s, on_signal) for s in (signal.SIGINT, signal.SIGTERM)}
+        try:
+            while proc is not None:
+                try:
+                    code = proc.wait(timeout=sample_s)
+                    rc = code
+                    verdict = "OK" if code == 0 else "FAILED"
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+                kb, _ = tree_rss_kb(proc.pid)
+                peak_kb = max(peak_kb, kb)
+                if interrupted:
+                    kill_tree(proc)
+                    verdict, rc = "INTERRUPTED", 130
+                elif time_s and time.time() - t0 > time_s:
+                    kill_tree(proc)
+                    verdict, rc = "TIMEOUT", 124
+                elif mem_mb and kb > mem_mb * 1024:
+                    kill_tree(proc)
+                    verdict, rc = "EXPLODED-mem", 137
+                if verdict:
+                    break
+        finally:
+            for s, h in old.items():
+                signal.signal(s, h)
+        elapsed = time.time() - t0
+        mem_enforced = not (mem_mb and _WARNED_NO_RSS)
+        if not mem_enforced:
+            fh.write(f"\n# WARNING: {NO_RSS_REASON}; the memory limit was NOT enforced\n")
+        fh.write(f"\n# verdict={verdict} rc={rc} elapsed_s={elapsed:.1f} peak_rss_mb={peak_kb / 1024:.1f}\n")
+    if json_out:
+        json_out.write_text(json.dumps({"verdict": verdict, "rc": rc, "elapsed_s": round(elapsed, 2),
+                                        "peak_rss_mb": round(peak_kb / 1024, 1),
+                                        "time_limit_s": time_s, "mem_limit_mb": mem_mb,
+                                        "mem_enforced": mem_enforced}, indent=2) + "\n")
+    print(verdict)
+    return rc
+
+
+def selftest() -> int:
+    me = [sys.executable, str(Path(__file__).resolve())]
+    py = sys.executable
+    try:  # on a slow or busy machine, bin/selftest passes SELFTEST_TIMEOUT_SCALE to stretch the limits
+        scale = max(1.0, float(os.environ.get("SELFTEST_TIMEOUT_SCALE", "1")))
+    except ValueError:
+        scale = 1.0
+    checks = []  # (name, True | False | None); None = skipped, with the reason in SKIP_WHY
+    can_sample = bool(_proc_table())
+    with tempfile.TemporaryDirectory(prefix="guard-run selftest ") as tmp:
+        tmp = Path(tmp)
+
+        def run(args, timeout=60):
+            r = subprocess.run(me + args, capture_output=True, text=True, timeout=int(timeout * scale))
+            return r.returncode, r.stdout.strip()
+
+        log = tmp / "ok.log"
+        rc, out = run(["--log", str(log), "--", py, "-c", "print('hello from child')"])
+        checks.append(("OK on a passing command, output in the log",
+                       rc == 0 and out == "OK" and "hello from child" in log.read_text()))
+
+        rc, out = run(["--log", str(tmp / "f.log"), "--", py, "-c", "raise SystemExit(3)"])
+        checks.append(("FAILED keeps the command's exit code", rc == 3 and out == "FAILED"))
+
+        pidfile = tmp / "grandchild.pid"
+        sleeper = ("import subprocess, sys, time\n"
+                   "p = subprocess.Popen(['sleep', '30'])\n"
+                   "open(sys.argv[1], 'w').write(str(p.pid))\n"
+                   "time.sleep(30)\n")
+        t0 = time.time()
+        rc, out = run(["--time", "1", "--sample", "0.2", "--log", str(tmp / "t.log"),
+                       "--json", str(tmp / "t.json"), "--", py, "-c", sleeper, str(pidfile)])
+        fast = time.time() - t0 < 15 * scale
+        checks.append(("TIMEOUT trips on a sleeping child, exit 124",
+                       rc == 124 and out == "TIMEOUT" and fast))
+        gone = False
+        if pidfile.exists():
+            gpid = int(pidfile.read_text())
+            for _ in range(int(20 * scale)):
+                try:
+                    os.kill(gpid, 0)
+                except ProcessLookupError:
+                    gone = True
+                    break
+                except PermissionError:
+                    break
+                time.sleep(0.1)
+        checks.append(("the grandchild is killed too", gone))
+        checks.append(("--json records the verdict",
+                       json.loads((tmp / "t.json").read_text()).get("verdict") == "TIMEOUT"))
+
+        hog = "import time\nb = b'x' * (200 * 1024 * 1024)\ntime.sleep(20)\n"
+        if can_sample:
+            rc, out = run(["--mem", "50", "--sample", "0.2", "--time", "30", "--log", str(tmp / "m.log"),
+                           "--", py, "-c", hog])
+            checks.append(("EXPLODED-mem trips on a 200 MB child with a 50 MB limit",
+                           rc == 137 and out == "EXPLODED-mem"))
+        else:
+            checks.append(("EXPLODED-mem trips on a 200 MB child with a 50 MB limit", None))
+            rc, out = run(["--mem", "50", "--time", "1", "--sample", "0.2", "--log", str(tmp / "n.log"),
+                           "--json", str(tmp / "n.json"), "--", py, "-c", "import time; time.sleep(3)"])
+            checks.append(("without memory sampling, --json records mem_enforced: false",
+                           json.loads((tmp / "n.json").read_text()).get("mem_enforced") is False))
+    checks.append(("ps RSS with a BusyBox unit suffix parses",
+                   [_ps_kb(x) for x in ("812", "200m", "1g", "1.5m", "x")]
+                   == [812, 204800, 1048576, 1536, None]))
+    with tempfile.TemporaryDirectory() as d:  # the /proc fallback, on a fake /proc tree
+        fake = Path(d)
+        for pid, ppid, kb in ((10, 1, 100), (11, 10, 250)):
+            (fake / str(pid)).mkdir()
+            (fake / str(pid) / "stat").write_text(f"{pid} (a (weird) name) S {ppid} 0 0\n")
+            (fake / str(pid) / "status").write_text(f"Name:\tx\nVmRSS:\t{kb} kB\n")
+        (fake / "self").mkdir()
+        rows = sorted(_proc_table(fake, use_ps=False))
+        checks.append(("/proc fallback reads pid, ppid and VmRSS", rows == [(10, 1, 100), (11, 10, 250)]))
+    checks.append(("memory sampling works on this machine", True if can_sample else None))
+    for name, ok in checks:
+        if ok is None:
+            print(f"SKIP {name}: {NO_RSS_REASON}; memory limits are not enforced on this machine")
+        else:
+            print(("PASS " if ok else "FAIL ") + name)
+    return 0 if all(ok is not False for _, ok in checks) else 1
+
+
+def main(argv: list[str]) -> int:
+    if "--selftest" in argv[:1]:
+        return selftest()
+    ap = argparse.ArgumentParser(prog="guard-run", description=__doc__.split("\n\n")[0],
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 epilog=__doc__.split("\n\n", 1)[1])
+    ap.add_argument("--time", type=float, default=float(os.environ.get("TIME_LIMIT_S") or 0),
+                    help="wall-time limit in seconds (0 = none)")
+    ap.add_argument("--mem", type=float, default=float(os.environ.get("MEM_LIMIT_MB") or 0),
+                    help="memory limit in MB for the whole process tree (0 = none)")
+    ap.add_argument("--sample", type=float, default=float(os.environ.get("SAMPLE_S") or 0.5),
+                    help="seconds between samples")
+    ap.add_argument("--log", help="log file for the command's output (default: a temp file)")
+    ap.add_argument("--json", help="also write {verdict, rc, elapsed_s, peak_rss_mb} here")
+    ap.add_argument("cmd", nargs=argparse.REMAINDER, help="-- command and its arguments")
+    args = ap.parse_args(argv)
+    cmd = args.cmd[1:] if args.cmd[:1] == ["--"] else args.cmd
+    if not cmd:
+        ap.error("no command given (put it after --)")
+    log = Path(args.log) if args.log else Path(tempfile.gettempdir()) / f"guard-run.{os.getpid()}.log"
+    print(f"guard-run: log in {log}", file=sys.stderr)
+    return guard(cmd, args.time, args.mem, args.sample, log, Path(args.json) if args.json else None)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

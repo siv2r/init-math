@@ -1,0 +1,34 @@
+---
+id: CNNN
+status: open        # open | testing | weakly-supported | supported | refuted | proved | scope-tight
+questions: [QNNN]
+question-tie: <one sentence: what a verdict here changes in the question's answer>
+family: <the named family / scope the statement is about>
+credence:           # very unlikely | unlikely | even | likely | very likely (never certain), with date and reason; set by {{owner}}
+pursuit:            # why it is worth effort now, with date; set by {{owner}}
+# An agent may fill either with its proposal, ending `(proposed by an agent, <date>)`; {{owner}} confirms or changes it, removing the mark.
+# small-cases: not-informative   # optional; overrides [field_profile] in project.toml
+---
+# CNNN: <statement: property A of the objects in the family holds exactly when property B does>
+
+## Reading
+
+(The other readings of the statement and its conventions, then the intended reading and why.
+A result that holds only for a weaker reading says so in its evidence entry.)
+
+## Evidence
+
+(Dated entries, newest last. Each says what was checked, on which cases, with which tool and
+command, and the verdict, plus what the cases do NOT cover, and ends with `rivals:`,
+`differs-from-prior:`, `sign:`, `checked:` and `shares:` lines, `argued:` for an argued
+claim, and `repair:` after a counterexample. A refuted conjecture keeps its entries and is never deleted.)
+
+## Next steps
+
+@residue: <the cheapest step that could falsify or narrow this; one line per step>
+{{#if modules.attempts}}
+
+## Attempts
+
+`bin/attempts --target CNNN`
+{{/if}}

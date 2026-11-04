@@ -1,0 +1,20 @@
+id = "launch"
+number = 15
+title = "Long runs: launch, wait, verify"
+group = "D"
+status = "included"
+order = 150
+summary = "A preflight before any long computation, a tracked waiter with a heartbeat, and checking the deliverable rather than the exit code; a hook refuses hand-rolled wait loops and backgrounding inside a background call, and nudges on detached launches."
+depends = []
+off_in_presets = ["theory-only"]
+
+[[hooks]]
+script = "hooks/wakeup-waiter-nudge.py"
+event = "PreToolUse"
+actions = ["wakeup"]
+harnesses = ["claude"]
+
+[[hooks]]
+script = "hooks/launch-guard.py"
+event = "PreToolUse"
+actions = ["shell"]

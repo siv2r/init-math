@@ -1,0 +1,11 @@
+kind = "flawed"
+error_class = "unwarranted assumption: a WLOG gcd(x, y) = 1 that loses generality"
+location = "the reduction 'so after removing common factors it suffices to treat solutions with gcd(x, y) = 1'"
+catch = "says the reduction to gcd(x, y) = 1 loses generality: the scaling only removes a common factor t^3 of x and y when t^2 divides z, and e.g. (2, 2, 2) is not a scaling of a coprime solution; ideally the counterexample (x, y, z) = (54, 54, 18): 54^2 + 54^2 = 5832 = 18^3 and 3 divides 18 (also (54, 297, 45) and (135, 270, 45))"
+audited = "2026-10-28, Claude Fable 5.1: brute force z < 60 finds exactly (54,54,18), (54,297,45), (135,270,45) as counterexamples; the argument after the gcd reduction re-derived and correct"
+# The statement is FALSE; it is true for coprime x, y, which is all the proof treats.
+# Verified by brute force over z < 60: the counterexamples are (54, 54, 18), (54, 297, 45),
+# (135, 270, 45); the smallest z is 18 (a prime q = 3 mod 4 must divide z to an even power,
+# so 9 | z, and z = 9 has only 729 = 27^2 + 0^2).
+# These come from scaling (2, 2, 2) and (2, 11, 5) by t = 3; (2, 2, 2) itself has gcd 2.
+# The argument after the reduction is correct.

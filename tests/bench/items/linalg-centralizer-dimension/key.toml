@@ -1,0 +1,16 @@
+kind = "control"
+error_class = ""
+location = ""
+catch = ""
+audited = "2026-10-28, Claude Fable 5.1: control; closedness of {rank L_A <= n^2 - n} via minors, density of distinct-eigenvalue matrices via the discriminant, and the n distinct eigenvalues case re-derived; Sage centralizer dimensions 4, 16, 8 for J_4(0), I_4, J_2 + J_2"
+# CORRECT. The unusual move: instead of a normal-form computation, rank L_A <= n^2 - n is a
+# closed (polynomial) condition that holds on the dense set of matrices with distinct
+# eigenvalues, hence everywhere (lower semicontinuity of rank, in the right direction:
+# the kernel can only grow under limits).
+# Checks: for distinct eigenvalues the minimal polynomial has degree n, so 1, A, ..., A^(n-1)
+# are independent; the minors of the matrix of L_A are polynomials in the entries of A; the
+# discriminant of the characteristic polynomial is a polynomial in the entries and is nonzero
+# at diag(1..n); a polynomial vanishing on an open set of C^N is zero, so its nonvanishing
+# set is dense. n = 1 is covered (L_A = 0).
+# Sage sanity check: centralizer dimensions 4 (Jordan block J_4(0)), 16 (I_4), 8 (J_2 + J_2).
+# The closing remark about a single Jordan block is true (its centralizer is C[J]).

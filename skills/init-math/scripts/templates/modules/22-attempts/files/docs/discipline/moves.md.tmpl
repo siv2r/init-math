@@ -1,0 +1,198 @@
+# Moves
+
+Prompts for choosing an approach on a hard target, each with a worked example from the
+literature. Load the `attack` skill to use them; `bin/attempts --moves` lists them in an
+order that tracks which ones have been working in this project. A move is a prompt, not a
+procedure: knowing the moves matters less than deciding which to spend effort on and when to
+stop, and that is what the budgets and the audit are for.
+
+Name the moves a line uses when you start it (`bin/attempts new ... --moves <ids>`), and
+credit the ones that helped when it closes (`--contributed <ids>`).
+
+## toy-model
+
+**When:** the target has several difficulties at once. **How:** keep the one you care about,
+switch the others off, and solve that version first; then ask what the solution used that the
+real problem lacks.
+**Example (additive combinatorics):** Meshulam's version of Roth's theorem in the vector space
+over the field with three elements has none of the integers' carrying and scale issues, so
+the Fourier density-increment argument runs cleanly there; the work over the integers is
+then exactly the cost of putting those issues back.
+**Not when:** no simplified version keeps the hard part. A toy without it teaches nothing
+about the target.
+
+## specialize-generalize
+
+**When:** stuck on the stated generality. **How:** specialize to a case you can do and look
+for what generalizes; or generalize until irrelevant detail disappears and induction gets a
+stronger hypothesis to use.
+**Example (graph theory):** Thomassen proved every planar graph is 5-choosable by proving a
+stronger statement about near-triangulations with part of the outer face precoloured. The
+stronger hypothesis is what makes the induction go through.
+**Not when:** the special cases are all settled and taught nothing about the general one.
+
+## assume-missing-lemma
+
+**When:** an argument would work if one step held. **How:** state that step as an explicit
+hypothesis, finish everything else, and only then attack it; the finished argument tells you
+exactly how strong the lemma must be.
+**Example (number theory):** the analytic proof of the prime number theorem reduces, once the
+rest is written out, to the non-vanishing of the zeta function on the line Re(s) = 1. Stated
+precisely, the gap could be attacked on its own.
+**Not when:** the assumed lemma is as hard as the target, or is just the target restated.
+
+## what-if-not
+
+**When:** you do not know which hypothesis does the work. **How:** negate or drop one
+hypothesis (or one attribute of the conclusion) at a time and ask what follows.
+**Example (geometry):** replacing the parallel postulate by its negation, instead of trying to
+derive it, produced non-Euclidean geometries; Beltrami's later model proved them consistent,
+so the postulate is independent.
+**Not when:** the hypothesis is already known to be necessary, by a counterexample on record.
+
+## decoy-object
+
+**When:** a method looks promising for a target. **How:** build an object that agrees with
+the real one on everything the method can see, but fails the conclusion. If one exists, the
+method cannot work alone; what tells the two apart is the missing ingredient.
+**Example (number theory):** deleting from the primes every p with p + 2 prime changes their
+count up to x by at most a constant times x/(log x)^2 (Brun's sieve bound), so a method
+that sees the primes to no better accuracy cannot tell the two sets apart, and the second has
+no twin pairs. Selberg's parity example is the sieve version: a sieve's inputs cannot tell
+numbers with an even number of prime factors from those with an odd number, so sieve axioms
+alone cannot isolate primes.
+**Not when:** the method already uses a property no decoy can share.
+
+## port-special-case-proof
+
+**When:** special cases or neighbouring results have been proved. **How:** search the
+literature for the methods behind them, not only the statements. For each, ask what it needs
+and what a bridge lemma would have to supply for the general case. Check a borrowed
+theorem's hypotheses against the case you need before relying on it.
+**Example (additive combinatorics):** Roth's Fourier proof for three-term progressions did not
+port to longer ones. Szemerédi's theorem was first proved combinatorially; Gowers's later
+Fourier-analytic proof supplied the bridge: the uniformity norms now named after him, the
+start of higher-order Fourier analysis. The missing piece was control of longer progressions
+by these norms, which three-term progressions do not need because ordinary Fourier
+coefficients already control them.
+**Not when:** the neighbouring proofs depend on a property the target lacks; check this first.
+
+## impossibility-as-assumptions
+
+**When:** building an object (a protocol, a counterexample, a configuration) and impossibility
+results or known attacks exist. **How:** read each impossibility result as a list of the
+assumptions it needs; a construction must break at least one of them. List what every known
+attack relies on, and design against the list.
+**Example (cryptography):** constant-round public-coin zero-knowledge with black-box
+simulation is impossible for non-trivial languages (Goldreich–Krawczyk), so such a protocol
+had to give up black-box simulation; Barak's non-black-box construction did exactly that.
+**Not when:** no impossibility result or attack is known yet: find or make one first.
+
+## repair-by-removing-hypothesis
+
+**When:** an attack or counterexample breaks a construction or a proof. **How:** find exactly
+what the attack relies on, and repair by changing the setting so that thing is gone, rather
+than patching the symptom. A repair that answers the recorded attack is part of the same
+line (`bin/attempts log --repair`).
+**Example (cryptography):** a secret-prefix MAC built from a Merkle–Damgård hash falls to
+length extension, which relies on the attacker continuing the hash from its output; HMAC's
+nested construction removes that access. In proofs, the lemma-incorporation of Lakatos's
+*Proofs and Refutations* (on Euler's polyhedron formula) is the same move: a counterexample
+is turned into the hypothesis the proof had silently used.
+**Not when:** the attack uses something the target needs; then the statement, not the
+construction, must change.
+
+## impose-equality-in-bound
+
+**When:** a bound is close to known examples, or you want the extremal object. **How:** ask
+what equality in the bound would force, and build the object those conditions describe.
+**Example (geometry):** equality in the Cohn–Elkies linear-programming bound for sphere packing
+forces the auxiliary function and its Fourier transform to vanish at the nonzero lattice
+vectors. Viazovska constructed a function with exactly those zeros in dimension 8.
+**Not when:** the bound is far from every known example; equality then describes nothing.
+
+## change-representation
+
+**When:** the current formulation fixes choices that the problem does not. **How:** list the
+implicit choices the current view makes, and vary one. Candidates:
+- a weak or variational formulation;
+- a change of coordinates or gauge;
+- a covering space or a quotient;
+- spectral rather than spatial;
+- a geometric, algebraic or combinatorial encoding;
+- a probabilistic reformulation;
+- the dual problem, or a certificate;
+- a limit object;
+- a different order of quantifiers, or of evaluation.
+
+**Example (combinatorics):** Dvir proved the finite-field Kakeya conjecture by changing a
+counting problem into one about polynomials: a small Kakeya set in a space over the field
+with q elements would lie in the zero set of a nonzero polynomial of degree less than q. The
+polynomial then vanishes on each line in the set, so its highest-degree part vanishes in
+every direction, which a nonzero polynomial of degree less than q cannot do.
+**Not when:** the new representation only restates the difficulty. Check that one step got
+easier, not just different.
+
+## enumerate-shapes-from-necessary-conditions
+
+**When:** looking for an object with given properties. **How:** derive necessary conditions
+first, let them cut the possible shapes down to a short list, then try to build each one.
+**Example (geometry):** the angles at a vertex of a convex regular polyhedron must sum to less
+than 360 degrees, which leaves five combinations of face and vertex degree; each is then
+constructed. In design theory the Bruck–Ryser theorem rules out orders of projective planes
+before any search.
+**Not when:** the necessary conditions leave too many shapes to try; sharpen them first.
+
+## invariant
+
+**When:** asking whether a configuration can be reached, or a process must stop. **How:**
+find a quantity the allowed operations preserve (an invariant) or change in only one
+direction (a monovariant), and compare its value at the start with its value at the goal.
+**Example (combinatorics):** in Conway's soldiers, pegs start on the squares below a line
+and move by jumping, and no peg can reach the fifth row above it. Weight each square by
+x^d, with d its distance to the target square and x = (√5 − 1)/2, so that x² + x = 1. No
+jump increases the total weight, the whole half-plane below the line has weight exactly 1,
+the weight of the target, and any finite starting set weighs less (Berlekamp, Conway and
+Guy, *Winning Ways for Your Mathematical Plays*, 1982). Colouring a board in two colours is
+the same move: two opposite corners removed from a chessboard leave 30 squares of one
+colour and 32 of the other, so no tiling by dominoes, each covering one of each, exists.
+**Not when:** the operations change every natural quantity in both directions; look first
+for a weighting under which one moves only one way, as above.
+
+## compute-examples
+
+**When:** you do not yet know what to prove. **How:** compute many cases, tabulate a
+quantity across them, and guess the pattern; then state it as a conjecture and look for the
+mechanism.
+**Example (number theory):** Birch and Swinnerton-Dyer computed, for many elliptic curves
+y² = x³ − Dx, the product over primes p ≤ X of N_p / p, where N_p counts points mod p,
+and saw it grow like a constant times (log X)^r, with r the rank of the curve; that is the
+origin of their conjecture (J. reine angew. Math. 218, 1965).
+**Not when:** small cases say little about the claim (`[field_profile]` in project.toml).
+π(x) < li(x) holds for every x anyone has computed, yet Littlewood proved in 1914 that it
+fails infinitely often; Guy collected many such small-number patterns that fail later
+(*The strong law of small numbers*, Amer. Math. Monthly 95, 1988).
+
+## Project moves
+
+Moves specific to this project, from three sources: attempt records, when a move not listed
+above keeps helping; conversations with {{owner}}, when {{owner}} suggests or uses a
+technique not listed (offer to add it, and add it on their yes); and the literature, when a
+paper's result turns on a technique not listed that could apply here (one that is not a
+renaming of a listed move). Each one needs a `kind = "move"` entry in
+[docs/principles.toml](../principles.toml) and a section here with the same form: when, how,
+an example (from this project's records, from {{owner}}'s words, or from the paper, with its
+citation; a move seeded from the interview starts with the example given there, or none, and
+gains one from the first record that credits it), when not.
+
+{{#each seeds.moves}}
+## {{id}}
+
+{{#if when}}**When:** {{when}}. {{/if}}**How:** {{says}}
+{{#if example}}**Example:** {{example}}{{/if}}
+*(Seeded from {{owner}}'s interview.)*
+
+{{/each}}
+{{#if !seeds.moves}}
+(None yet.)
+{{/if}}

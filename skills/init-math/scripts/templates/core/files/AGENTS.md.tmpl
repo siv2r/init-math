@@ -1,0 +1,141 @@
+{{#if view.shared}}
+# {{project.name}} — agent operating guide
+
+This is a mathematics research project in **{{project.field}}**{{#if project.subarea}} ({{project.subarea}}){{/if}},
+owned by **{{owner}}**, worked on by AI agents under the owner's direction. Read this file
+first in every session. It is short on purpose: each rule here names the moment it applies,
+and the longer reasoning lives in [docs/discipline/](docs/discipline/README.md), which you open
+when that moment comes. Words with a specific meaning here are defined in
+[GLOSSARY.md](GLOSSARY.md); look a term up rather than guessing: `bin/glossary <term>` prints just its entry. If you know an idea but not
+this project's word for it, check [SEARCH-ALIASES.md](SEARCH-ALIASES.md).
+{{#if view.coordinator}}
+{{#if modules.tiers}}
+
+You are the coordinator unless your brief says you are a worker (see the worker agent file and
+[docs/discipline/tiers.md](docs/discipline/tiers.md)). "Brick", "strong tier", "worker tier" and "long job" are defined in
+[GLOSSARY.md](GLOSSARY.md).
+{{/if}}
+{{else}}
+
+The **coordinator** is the main session, the one talking to {{owner}}; an agent dispatched by
+another agent never is. The coordinator's own rules are in
+[{{harness.coordinator_file}}]({{harness.coordinator_file}}), which a hook adds to the main session's context at its start
+and after each summary. If you are the coordinator and those rules are not in your context,
+read {{harness.coordinator_file}} before your first action.{{#if modules.tiers}} If your brief says you are a worker, see the
+worker agent file and [docs/discipline/tiers.md](docs/discipline/tiers.md); "brick", "strong tier", "worker tier" and
+"long job" are defined in [GLOSSARY.md](GLOSSARY.md).{{/if}}
+{{/if}}
+{{else}}
+# {{project.name}} — coordinator rules
+
+You are the coordinator: the main session, the one talking to {{owner}}. These rules are yours;
+a dispatched agent never gets this file. You also follow everything in
+[AGENTS.md](AGENTS.md), which every agent reads.
+{{/if}}
+
+## Ground rules
+
+{{#if view.coordinator}}
+- **Work from this folder.** The project's skills, hooks, agents and settings load only in a
+  session started in this folder (the one holding this file){{#if harness.is_codex}}, trusted, with its hooks trusted via
+  `/hooks`{{/if}}. If you reached this file through another folder's instructions, or your session started
+  elsewhere, tell {{owner}} at once how to restart here, and do not imitate the missing
+  pieces by hand (running hook scripts yourself, pasting agent files into briefs).
+  `bin/doctor` checks what is loaded; run it in a session's first turn of work.
+{{/if}}
+{{#if view.shared}}
+- **Durable state lives on disk, never only in your context.** Questions, conjectures,
+  results, experiment runs, decisions and progress logs are files in this repository. Your
+  context window is scratch: it may be summarized or reset at any time. Before you hold a
+  decision in your head across steps, write it down where the next session will find it.
+- **Every working file has a home.** A line of work keeps its plan, documents and checks in
+  `work/<slug>/` (copy `work/TEMPLATE/`), and briefs and throwaway files (never a manuscript) in its
+  `scratch/`, which git ignores. `notes/` is only for standing notes on how the project
+  works. Where else things go: [work-folders.md](docs/discipline/work-folders.md).
+{{/if}}
+{{#if view.coordinator}}
+- **Some levers belong to the owner alone.** Only {{owner}} may:{{#if modules.questions}} mark a research question
+  `active`,{{/if}}{{#if modules.conjectures}} set `@priority` on a conjecture, approve promoting a conjecture to
+  `supported`, `scope-tight` or `proved` by our own proof,{{/if}} approve a change to {{#if view.shared}}this file{{else}}AGENTS.md or this file{{/if}} proposed as
+  ASK{{#if modules.reflect}} (a change only the owner may approve; see [notes/reflect-autonomy-heuristics.md](notes/reflect-autonomy-heuristics.md)){{/if}} by the reflection loop, edit the standing procedures in [notes/procedures.md](notes/procedures.md), or publish anything outside this repository. You may
+  *propose* any of these; never do them yourself.{{#if modules.commit_gate}}{{#if modules.questions}} (`.githooks/pre-commit` runs
+  [`bin/question-check`](bin/question-check), which checks the `activated-by:` lines; it is a
+  reminder, not authentication.){{/if}}{{/if}}
+{{/if}}
+{{#if view.shared}}
+{{#if !view.coordinator}}
+- **Some decisions belong to {{owner}} alone** (the list is in {{harness.coordinator_file}}). A dispatched agent
+  never makes one and never edits a record to do so; it reports, and the coordinator proposes.
+{{/if}}
+- **Report what is true, at the scope the evidence supports.** A result measured on one
+  family is a conjecture about other families. A finite computation is evidence, not a
+  proof. "Done" means verified: name the check you ran.
+- **{{owner}}'s seeds and framings are claims too.** Test them like any other, and report
+  evidence against one plainly and early. Against an informal idea, weigh the evidence; it
+  rarely refutes outright.
+{{/if}}
+{{#if view.coordinator}}
+- **Ask only at a genuine fork.** If the next steps are independent, cheap, and within what
+  you were asked to do, do them and report, then stop at the end of the task. Ask the owner
+  when a choice is theirs: a direction, a scope, something irreversible or
+  outward-facing{{#if modules.stopping}}. With a continue signal (the owner's latest message says keep going, or a
+  standing mandate they have not withdrawn) keep working through milestones. Rules:
+  [stopping.md](docs/discipline/stopping.md){{/if}}.
+- **The intake check, before a long computation or a new line of work.** List what the task leaves unspecified (scope and size,
+  method, what counts as done, time or cost, where results go, what to report). Take each
+  answer [notes/procedures.md](notes/procedures.md) gives; ask {{owner}} about the rest in one question, and
+  wait. A continue signal does not skip it. Record the answers in the work folder.
+  *Not for:* a bounded task (a small table, one lemma), or one the request or the
+  procedures settle entirely.
+- **Commit your finished work locally** with an explicit path list (`git commit -- <paths>`)
+  and a message that says what changed and why. Never commit files you did not mean to.
+  Add to that list any of `logs/*.jsonl`{{#if modules.commit_gate}} and `.gates/*.jsonl`{{/if}} that
+  changed: hooks append to them and they are part of the project's record. Pushing is the owner's.
+{{/if}}
+{{#if view.shared}}
+{{#if harness.is_claude}}
+- This project is set up for **Claude Code**. Agents are in `.claude/agents/`, skills in
+  `.claude/skills/`, hook registrations in `.claude/settings.json`.
+{{/if}}
+{{#if harness.is_codex}}
+- This project is set up for **Codex CLI**. Agents are in `.codex/agents/`, skills in
+  `.agents/skills/`, hook registrations in `.codex/hooks.json` (trust them once with `/hooks`).
+{{/if}}
+
+## Where things are
+
+| Path | What it holds |
+|---|---|
+{{#if modules.questions}}
+| `wiki/questions/` | the research questions: what we are trying to answer |
+{{/if}}
+{{#if modules.conjectures}}
+| `wiki/conjectures/` | the conjecture ledger: what we believe and how strongly |
+{{/if}}
+{{#if modules.attempts}}
+| `wiki/attempts/` | every line of attack: where it broke, what would revive it (`bin/attempts`) |
+{{/if}}
+{{#if modules.known_results}}
+| `wiki/known-results/` | what the literature already proves |
+{{/if}}
+{{#if modules.literature}}
+| `wiki/raw/`, `wiki/inbox/`, `wiki/concepts/` | sources (never edited), sources not yet read, synthesized articles |
+{{/if}}
+{{#if modules.experiments}}
+| `experiments/` | experiments and their archived runs |
+{{/if}}
+{{#if modules.lean}}
+| `formal/` | the Lean formalization |
+{{/if}}
+| `work/` | one folder per line of work: its README (plan, RESUME HERE, outcome), documents, checks, and a git-ignored `scratch/` |
+| `docs/discipline/` | the reasoning behind the rules below |
+| `docs/OWNER.md` | the owner's manual: what only the owner does, and how to tune this setup |
+| `notes/workflow-journal.md`, `logs/` | the reflection loop's record of friction and failures (`logs/*.jsonl`{{#if modules.commit_gate}} and `.gates/*.jsonl`{{/if}} are created on first use) |
+| `project.toml` | the project's settings (stack commands, model tiers{{#if modules.commit_gate}}, gate policy{{/if}}) |
+| `bin/` | the project's scripts; run `bin/selftest` after you change a hook or the settings |
+{{/if}}
+
+{{#each module_sections}}
+{{.}}
+
+{{/each}}

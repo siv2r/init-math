@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Check that this project's agent setup is healthy. Run it after cloning and after
+changing any hook, script or AGENTS.md.
+
+    bin/selftest            run every check, print one line each, exit 1 on any FAIL
+                            (WARN, e.g. a check this machine cannot run, does not fail)
+    bin/selftest -v         also print the output of failing checks
+
+What it runs (by convention, so a new script or hook is picked up automatically):
+  * every hook script under hooks/ must compile;
+  * every test file under hooks/selftest/test_*.py (run with unittest);
+  * every executable in bin/ whose first 15 lines contain the marker `selftest: yes`
+    is run as `bin/<name> --selftest` and must exit 0 (these runs go in parallel);
+  * AGENTS.md stays under the size the harness reads (Codex truncates past 32 KiB);
+  * COORDINATOR.md, where the project has one, fits in the parts its SessionStart hook can
+    show (hooks/coordinator-context.py);
+  * git's hooksPath points at .githooks (the commit gate), if .githooks/ exists;
+  * once work has been committed, the harness has run the project's hooks at least once
+    (a WARN otherwise: the agent is being started somewhere else).
+
+On a slow or busy machine, set SELFTEST_TIMEOUT_SCALE (e.g. 4) to multiply each check's
+time limit; it is passed on to the checks, so their own inner limits scale too.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+AGENTS_LIMIT = 32 * 1024
+
+
+def _scale() -> float:
+    try:
+        return max(1.0, float(os.environ.get("SELFTEST_TIMEOUT_SCALE", "1")))
+    except ValueError:
+        return 1.0
+
+AGENTS_WARN = 20 * 1024
+
+results: list[tuple[str, str, str]] = []  # (status, name, detail)
+
+
+def check(name: str, ok: bool, detail: str = "", warn: bool = False) -> None:
+    results.append(("PASS" if ok else ("WARN" if warn else "FAIL"), name, detail))
+
+
+def run(cmd: list[str], timeout: int = 120) -> tuple[int, str]:
+    timeout = int(timeout * _scale())
+    try:
+        r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout,
+                           env={**os.environ, "HOOKS_QUIET": "1"})
+        return r.returncode, (r.stdout + r.stderr).strip()
+    except subprocess.TimeoutExpired:
+        return 124, f"timed out after {timeout}s"
+    except OSError as e:
+        return 126, str(e)
+
+
+def hooks_never_ran(root: Path, min_commits: int) -> str | None:
+    """A warning if this copy has at least `min_commits` commits but the harness has never
+    run one of its hooks here (hooks/_payload.py writes logs/state/harness-hooks-seen), else None."""
+    if (root / "logs" / "state" / "harness-hooks-seen").exists():
+        return None
+    try:
+        r = subprocess.run(["git", "-C", str(root), "rev-list", "--count", "HEAD"],
+                           capture_output=True, text=True, timeout=30)
+        if r.returncode != 0 or int(r.stdout.strip() or 0) < min_commits:
+            return None
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    return ("the agent harness has never run this project's hooks in this copy, although work "
+            "has been committed. The agent is probably being started outside this folder (a "
+            "folder above it, the Windows side, a chat that was already open), or Codex's hooks "
+            "are not trusted (type /hooks in Codex). Until then the project's skills, automatic "
+            f"checks, reviewers and model settings are not in effect. Restart the agent here "
+            f"(cd {root}, then start it) and have it run bin/doctor.")
+
+
+def main() -> int:
+    verbose = "-v" in sys.argv[1:]
+    if sys.version_info < (3, 11):
+        print("bin/selftest needs Python >= 3.11", file=sys.stderr)
+        return 2
+
+    for p in sorted((ROOT / "hooks").glob("*.py")):
+        try:
+            compile(p.read_text(encoding="utf-8"), str(p), "exec")
+            check(f"compile {p.relative_to(ROOT)}", True)
+        except SyntaxError as e:
+            check(f"compile {p.relative_to(ROOT)}", False, str(e))
+
+    # The test runs below are independent, so they run in parallel; results print in order.
+    jobs: list[tuple[str, list[str]]] = []
+    tdir = ROOT / "hooks" / "selftest"
+    for t in sorted(tdir.glob("test_*.py")) if tdir.is_dir() else []:
+        jobs.append((f"hook selftest {t.relative_to(ROOT)}",
+                     [sys.executable, "-m", "unittest", "discover", "-s", str(tdir), "-p", t.name]))
+
+    for p in sorted((ROOT / "bin").iterdir()):
+        if p.name == "selftest" or not p.is_file() or not os.access(p, os.X_OK):
+            continue
+        try:
+            head = "".join(p.read_text(encoding="utf-8", errors="replace").splitlines(True)[:15])
+        except OSError:
+            continue
+        if "selftest: yes" in head:
+            jobs.append((f"bin/{p.name} --selftest", [str(p), "--selftest"]))
+
+    with ThreadPoolExecutor(max_workers=min(8, os.cpu_count() or 2)) as pool:
+        for (name, _), (rc, out) in zip(jobs, pool.map(lambda j: run(j[1]), jobs)):
+            # A script prints `SKIP <check>: <reason>` for a check this machine cannot run;
+            # that is not a failure, but it is shown so nobody assumes the check passed.
+            skips = [ln for ln in out.splitlines() if ln.startswith("SKIP ")]
+            if rc == 0 and skips:
+                check(name, False, "; ".join(skips), warn=True)
+            else:
+                check(name, rc == 0, out)
+
+    agents = ROOT / "AGENTS.md"
+    if agents.exists():
+        n = len(agents.read_bytes())
+        if n > AGENTS_LIMIT:
+            check("AGENTS.md size", False, f"{n} bytes > {AGENTS_LIMIT}: Codex would truncate it")
+        else:
+            check("AGENTS.md size", n <= AGENTS_WARN, f"{n} bytes (keep under {AGENTS_WARN})", warn=True)
+
+    coord, hook = ROOT / "COORDINATOR.md", ROOT / "hooks" / "coordinator-context.py"
+    if coord.exists() and hook.exists():
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("coordinator_context", hook)
+        cc = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cc)
+        n = len(cc.parts(coord.read_text(encoding="utf-8"), cc.LIMIT - 200))
+        check("COORDINATOR.md fits its hook", n <= cc.PARTS,
+              f"{n} parts > {cc.PARTS}: the rest is only pointed to; shorten it or add a "
+              "`--part` registration (and raise PARTS)", warn=True)
+
+    if (ROOT / ".githooks").is_dir():
+        rc, top = run(["git", "rev-parse", "--show-toplevel"])
+        if rc != 0 or Path(top).resolve() != ROOT.resolve():
+            # Not its own git repository yet (e.g. rendered but not initialized): nothing to check.
+            check("git core.hooksPath = .githooks", False,
+                  "not a git repository; run `git init` then bin/setup-hooks", warn=True)
+        else:
+            rc, out = run(["git", "config", "--get", "core.hooksPath"])
+            check("git core.hooksPath = .githooks", rc == 0 and out == ".githooks",
+                  "run bin/setup-hooks" if out != ".githooks" else "")
+
+    never = hooks_never_ran(ROOT, 2)
+    check("harness has run the hooks", never is None, never or "", warn=True)
+
+    width = max((len(n) for _, n, _ in results), default=0)
+    for status, name, detail in results:
+        line = f"{status:4}  {name:<{width}}"
+        if status != "PASS" and detail and (verbose or status == "WARN" or "\n" not in detail):
+            line += f"  {detail}"
+        print(line)
+        if verbose and status == "FAIL" and "\n" in detail:
+            print("      " + detail.replace("\n", "\n      "))
+    fails = sum(1 for s, _, _ in results if s == "FAIL")
+    print(f"\n{len(results)} checks, {fails} failed")
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

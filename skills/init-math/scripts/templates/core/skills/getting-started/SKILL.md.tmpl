@@ -1,0 +1,143 @@
+---
+name: getting-started
+description: Walk {{owner}} through the first session in this project, one step at a time, instead of having them read docs/OWNER.md — the self-check, choosing the question to start on, the sources to read first, and how working with the agents goes. Load it when {{owner}} asks to get started, asks what to do first, or seems unsure how to begin.
+---
+
+# Getting started
+
+{{owner}} has just created this project, or is coming back to it unsure where to begin.
+Walk them through the first session, using `docs/OWNER.md` ("Day one" and "Later, when
+needed") as your source, so they do not have to read it themselves.
+
+How to walk them through it:
+
+- **One step at a time.** Say what the step is and why it matters in two or three
+  sentences, do the part that is yours, and wait for {{owner}}'s answer before the next
+  step.
+- **Plain words.** {{owner}} is a mathematician who may be new to agents and terminals.
+  Explain a term from `GLOSSARY.md` the first time it comes up, in one sentence.
+- **Their decisions stay theirs.** You may explain, propose and do the steps they agree
+  to. You never choose for them which question is active.
+- Skip any step that is already done, and say so in one line.
+
+## 1. Check the setup
+
+First run `bin/doctor`. It checks the live session, not the files: that this session
+started in the project's own folder, that the project's hooks (its automatic checks) ran
+for that very command,{{#if harness.is_codex}} that Codex trusts the folder and runs the main thread on the
+configured model,{{/if}} and, once there are any, that subagents run as the project's own agents.
+For each FAIL, tell {{owner}} in plain words what is not loaded and how to fix it (each
+line says how), and stop here until it passes: work done in a session that fails it runs
+without the project's reviewers, checks and settings, and nothing else would tell them.
+If {{owner}} tells you to go on anyway (the check may misfire on an unusual folder
+arrangement), go on, but first say which protections are missing, one per FAIL line, and
+log the failure as a setup problem{{#if modules.reflect}} (`bin/journal --add friction "doctor FAIL, continued on {{owner}}'s say-so: <the FAIL lines>"`){{/if}}.
+Typical fixes: start the agent again from the project folder (in a terminal, `cd` into it
+first; in VS Code, File > Open Folder… and choose the project folder itself, not a folder
+above it); on Windows, from Ubuntu rather than the Windows side{{#if harness.is_codex}}; trust the folder when Codex
+asks, and type `/hooks` and trust the project's hooks{{/if}}. If the project's path starts with
+`/mnt/`, it is on the Windows drive, where it runs slowly; mention that moving it into the
+Linux home folder helps.
+{{#if harness.is_codex}}
+
+If they use the Codex extension in VS Code, suggest running `codex` in VS Code's built-in
+terminal instead: the extension does not load plugins and may skip the hooks.
+{{/if}}
+
+Run `bin/selftest`. If every line says PASS, tell them the setup is healthy in one
+sentence. If a line says FAIL, run `bin/selftest -v`, explain what is broken, and offer to
+fix it before going on.
+
+{{#if modules.questions}}
+## 2. The question to start on
+
+Read the files in `wiki/questions/` and summarize each question in one or two plain
+sentences, with its status. Explain: agents work only on questions {{owner}} has made
+*active*, and only {{owner}} decides that.
+
+{{#if seeds.active_question}}
+In the interview {{owner}} chose {{seeds.active_question}} to start on, so it is already
+active. Ask whether that is still the one; if they want a different one, see below.
+{{else}}
+No question is active yet. Ask which one they want to start on, and recommend starting
+with one: a single question gives a focused first round and shows how the setup behaves.
+If none says what they want answered, offer to draft a new one with them (the
+`new-question` skill).
+{{/if}}
+
+Only when {{owner}} tells you in this conversation which question to activate, set its
+`status: active` and `activated-by: {{owner}}`, then run `bin/question-check` and confirm
+it passes. If they are unsure, leave everything as it is: nothing breaks, and they can
+activate one later by asking any agent.
+
+If a question file still has a placeholder, "(Not stated yet: …)" under "Why it matters" or
+"(Fill in: …)" under "What is known", offer to fill it with them now, starting with the
+question they start on. Ask one short question per placeholder and write their answer in
+their words; for "What is known", what they know offhand is enough, since the agents add
+the literature later: mark it "(from memory, to be checked)", so the first literature search
+confirms or corrects it. If they would rather skip it, leave the placeholder.
+{{/if}}
+
+{{#if modules.literature}}
+## 3. Sources to read first
+
+Read `wiki/inbox/_index.md`. If it lists sources, name them and explain that the agents
+read and summarize a source into the project's wiki before working from it. Offer to start
+on that now; do it only if {{owner}} agrees. If the inbox is empty, ask whether there are
+papers or notes the agents should know about, and offer to add them.
+{{/if}}
+
+## 4. How the work goes from here
+
+In a few sentences, explain what a working session looks like:
+
+- {{owner}} says what they want; you propose a concrete step tied to an active question
+  and say what it is for before doing anything long.
+{{#if modules.gates}}
+- Before a finding is recorded, separate reviewer agents check it: whether the conclusion
+  follows from the evidence, and whether it survives an attempt to break it.
+{{/if}}
+- What only {{owner}} does: activating questions, setting priorities, and approving the
+  changes to the setup that the reflection loop asks about (`docs/OWNER.md`, "What only
+  you do").
+- When something in the setup gets in their way, they can just say so: you log it
+  (the `friction` skill), and the `reflect` skill later turns recurring problems into
+  fixes.{{#if harness.is_codex}} To run a skill themselves, they type `$` and its name (for
+  example `$reflect`); `/skills` lists them.{{/if}} Any reminder that annoys them can be switched off (`docs/OWNER.md`, "Switching
+  off a nudge").
+- Coming back another day: open a terminal, `cd` into this folder, start the agent, and
+  ask where things stand. The files hold the state; nothing depends on this session.
+
+Ask whether they have questions about any of it.
+
+## 5. Things that can wait
+
+From "Later, when needed" in `docs/OWNER.md`, mention only the items that apply to this
+project, in one line each, and offer to do any of them now:
+{{#if modules.lean}}
+- where their Lean project lives (`[stack] lake_path` in `project.toml`), needed before
+  Lean work;
+{{/if}}
+{{#if modules.readers}}
+- their own papers and a model text for the write-up reviewers
+  (`docs/discipline/exposition.md`), if they did not give them in the interview;
+{{/if}}
+{{#if modules.cache}}
+- what the cache of computed results is keyed by (`cache/manifest.md`), when an agent
+  first wants to cache a value;
+{{/if}}
+{{#if modules.commit_gate}}
+- `bin/setup-hooks` in any new copy (clone) of this repository;
+{{/if}}
+- the models and what they cost (`docs/OWNER.md`, "Models" and "What this costs").
+
+## 6. First real step
+
+{{#if modules.questions}}
+If a question is active, ask: "Shall I propose a first step on it?" On yes, propose one
+concrete step tied to that question, say what it would show, and wait for their go-ahead
+before starting.
+{{else}}
+Ask what they would like to work on first, propose one concrete step, and wait for their
+go-ahead before starting.
+{{/if}}

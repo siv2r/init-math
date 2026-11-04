@@ -1,0 +1,16 @@
+# The statement is FALSE for every k >= 3 (true neighbours: Petersen's theorem for bridgeless
+# cubic graphs; Plesnik: (k-1)-edge-connected k-regular graphs of even order).
+# The step fails: the concavity argument covers only 1 <= |C| <= k; for |C| > k the bound
+# |C|(k + 1 - |C|) is <= 0 and an odd component can send a single edge (a bridge) to S.
+# Counterexample (checked by code: 16 vertices, 3-regular, connected, exhaustive search finds
+# no perfect matching): a centre v joined by three bridges to three gadgets, each gadget being
+# K_4 on {p, q, r, s} with the edge pq replaced by a path p - w - q, and w joined to v.
+# With S = {v}: three odd components (5 vertices each), each with e(C, S) = 1 < 3 = k.
+# The smallest cubic graph with no perfect matching has 16 vertices, so small cases look fine.
+# For k = 4: S = {x, y} and four copies of K_5 minus an edge, the two ends of the missing edge
+# joined one to x and one to y (22 vertices) gives o(G - S) = 4 > 2.
+kind = "flawed"
+error_class = "dropped case: odd components with more than k vertices"
+location = "the bound e(C, S) >= |C|(k + 1 - |C|) >= k, justified by concavity between |C| = 1 and |C| = k"
+catch = "says the concavity argument only covers odd components with 1 <= |C| <= k; for |C| > k the bound is <= 0 and a component can be joined to S by a single edge (a bridge), so o(G - S) <= |S| does not follow; ideally gives the 16-vertex cubic counterexample (a vertex joined by three bridges to three copies of K_4 with one edge subdivided), where S = {centre} leaves three odd components"
+audited = "2026-10-28, Claude Fable 5.1: 16-vertex cubic graph built in code: 3-regular, connected, max matching 7 (no perfect matching), G - centre has three 5-vertex components; k = 4 example (22 vertices) also has no perfect matching; the concavity step is the only defect"

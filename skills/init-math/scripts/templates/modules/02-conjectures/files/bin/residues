@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+"""List every open next step (`@residue:` line) in the conjecture ledger, across ALL statuses.
+
+selftest: yes
+
+A conjecture's status says how strongly the core claim is believed, not whether work on it
+is finished: a `supported` or `proved` conjecture usually still has next steps. This script
+rebuilds the real backlog from the `@residue:` lines, whatever the status.
+
+Usage:
+  bin/residues                 every residue, `@priority` conjectures first, then in the
+                               owner's allocation order of their questions
+  bin/residues --eligible      only conjectures that link an `active` question
+  bin/residues --tsv           tab-separated: conjecture status priority questions residue
+  bin/residues --assumes       the assumptions in use: every `@assumes:` line in the ledger,
+                               the work folders and the attempt records, grouped by what is
+                               assumed, with the files that build on it
+  bin/residues --root DIR      read the project at DIR (default: this script's project)
+  bin/residues --selftest      run the built-in tests on temporary fixtures
+
+A residue line starts (after an optional `-` or `*` bullet and backtick) with `@residue:`.
+A `@priority` line counts only if the file also has a non-empty `activated-by:` line (the
+owner's mark; see docs/discipline/conjecture-ledger.md). After the list, conjectures with
+NO residue are named: an open one needs a first step; a settled one may be truly done, or
+its next steps were never written down.
+"""
+from __future__ import annotations
+
+import re
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+C_FILE = re.compile(r"^(C\d{3})-.+\.md$")
+Q_FILE = re.compile(r"^(Q\d{3})-.+\.md$")
+RESIDUE = re.compile(r"^\s*(?:[-*]\s*)?`?@residue`?:\s*(.*?)\s*$", re.M)
+PRIORITY = re.compile(r"^\s*(?:[-*]\s*)?`?@priority\b", re.M)
+ACTIVATED = re.compile(r"^\s*(?:[-*]\s*)?activated-by:[ \t]*([^#\n]*)", re.M)
+INDEX_LINK = re.compile(r"\[(Q\d{3})\]")
+SETTLED = ("supported", "proved", "scope-tight")
+ASSUMES = re.compile(r"^\s*(?:[-*]\s*)?`?@assumes`?:\s*(.+?)\s*$", re.M)
+SEP = re.compile(r"\s+(?:—|--)\s+")
+
+
+def load_config(root: Path) -> dict:
+    try:
+        with open(root / "project.toml", "rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def frontmatter(text: str) -> tuple[dict, str]:
+    if not text.startswith("---\n"):
+        return {}, text
+    end = text.find("\n---", 4)
+    if end < 0:
+        return {}, text
+    meta = {}
+    for line in text[4:end].splitlines():
+        key, sep, val = line.partition(":")
+        if sep and key.strip() and not key.strip().startswith("#"):
+            meta[key.strip()] = re.sub(r"\s+#.*$", "", val).strip()
+    return meta, text[end + 4:]
+
+
+def id_list(val: str) -> list[str]:
+    return [v.strip().strip("'\"") for v in val.strip("[] ").split(",") if v.strip()]
+
+
+def questions(root: Path, cfg: dict) -> tuple[dict[str, str], dict[str, int]]:
+    """Question statuses, and each question's position in the index (allocation order)."""
+    qdir = root / cfg.get("questions", {}).get("dir", "wiki/questions")
+    status: dict[str, str] = {}
+    order: dict[str, int] = {}
+    if not qdir.is_dir():
+        return status, order
+    for p in sorted(qdir.iterdir()):
+        m = Q_FILE.match(p.name)
+        if m:
+            status[m.group(1)] = frontmatter(p.read_text(encoding="utf-8"))[0].get("status", "")
+    index = qdir / "_index.md"
+    if index.is_file():
+        for q in INDEX_LINK.findall(index.read_text(encoding="utf-8")):
+            order.setdefault(q, len(order))
+    for q in sorted(status):
+        order.setdefault(q, len(order))
+    return status, order
+
+
+def collect(root: Path) -> tuple[list[dict], list[dict]]:
+    cfg = load_config(root)
+    cdir = root / cfg.get("conjectures", {}).get("dir", "wiki/conjectures")
+    qstatus, qorder = questions(root, cfg)
+    with_res: list[dict] = []
+    without: list[dict] = []
+    if not cdir.is_dir():
+        return with_res, without
+    for p in sorted(cdir.iterdir()):
+        m = C_FILE.match(p.name)
+        if not m:
+            continue
+        meta, body = frontmatter(p.read_text(encoding="utf-8"))
+        qs = id_list(meta.get("questions", ""))
+        prio = bool(PRIORITY.search(body)) and any(v.strip() for v in ACTIVATED.findall(body))
+        entry = {
+            "id": m.group(1),
+            "status": meta.get("status", "?") or "?",
+            "questions": qs,
+            "priority": prio,
+            "eligible": any(qstatus.get(q) == "active" for q in qs),
+            "rank": min((qorder.get(q, 10**6) for q in qs), default=10**6),
+            "residues": [r for r in RESIDUE.findall(body) if r],
+        }
+        (with_res if entry["residues"] else without).append(entry)
+    key = lambda e: (not e["priority"], e["rank"], e["id"])  # noqa: E731
+    with_res.sort(key=key)
+    without.sort(key=key)
+    return with_res, without
+
+
+def report(root: Path, eligible_only: bool, tsv: bool, out=print) -> int:
+    with_res, without = collect(root)
+    if eligible_only:
+        with_res = [e for e in with_res if e["eligible"]]
+        without = [e for e in without if e["eligible"]]
+    if tsv:
+        out("conjecture\tstatus\tpriority\tquestions\tresidue")
+        for e in with_res:
+            for r in e["residues"]:
+                out("\t".join([e["id"], e["status"], "yes" if e["priority"] else "no",
+                               ",".join(e["questions"]), r]))
+        return 0
+    if not with_res and not without:
+        out("no conjectures found" + (" that link an active question" if eligible_only else ""))
+        return 0
+    for e in with_res:
+        tags = [e["status"]] + (["@priority"] if e["priority"] else []) + \
+            ([] if e["eligible"] else ["parked: no active question"])
+        out(f"{e['id']} ({', '.join(tags)}; {','.join(e['questions']) or 'no question'})")
+        for r in e["residues"]:
+            out(f"  - {r}")
+    if without:
+        if with_res:
+            out("")
+        out("No @residue line:")
+        for e in without:
+            hint = "may be done, or its next steps were never written" if e["status"] in SETTLED \
+                else "write its first next step" if e["status"] in ("open", "testing", "weakly-supported") \
+                else "kept as a result"
+            out(f"  {e['id']} ({e['status']}): {hint}")
+    return 0
+
+
+def assumption_sources(root: Path, cfg: dict) -> list[Path]:
+    """The ledger, the work folders and the attempt records (each only if it exists)."""
+    out: list[Path] = []
+    cdir = root / cfg.get("conjectures", {}).get("dir", "wiki/conjectures")
+    if cdir.is_dir():
+        out += [p for p in sorted(cdir.iterdir()) if C_FILE.match(p.name)]
+    work = root / "work"
+    if work.is_dir():
+        out += [p for p in sorted(work.rglob("*")) if p.suffix in (".md", ".tex") and p.is_file()
+                and "TEMPLATE" not in p.relative_to(work).parts]
+    adir = cfg.get("attempts", {}).get("dir")
+    if adir and (root / adir).is_dir():
+        out += [p for p in sorted((root / adir).iterdir()) if p.suffix == ".md" and p.name[:1] == "L"]
+    return out
+
+
+def assumes_report(root: Path, out=print) -> int:
+    cfg = load_config(root)
+    statuses = {e["id"]: e["status"] for e in sum(collect(root), [])}
+    groups: dict[str, dict] = {}
+    argument_files = []
+    for p in assumption_sources(root, cfg):
+        rel = p.relative_to(root).as_posix()
+        text = p.read_text(encoding="utf-8", errors="replace")
+        if text.lstrip().startswith("# Argument:"):
+            argument_files.append(rel)
+        for line in ASSUMES.findall(text):
+            parts = SEP.split(line, maxsplit=2)
+            key = parts[0].strip()
+            g = groups.setdefault(key, {"claim": parts[1].strip() if len(parts) > 1 else "",
+                                        "kind": parts[2].strip() if len(parts) > 2 else "", "users": []})
+            if rel not in g["users"]:
+                g["users"].append(rel)
+    if not groups:
+        out("no @assumes lines (nothing in this project is recorded as building on an argued claim)")
+    else:
+        out(f"Assumptions in use ({len(groups)}):")
+        for key in sorted(groups):
+            g = groups[key]
+            out(f"{key} — {g['claim']} — {g['kind']}".rstrip(" —"))
+            out(f"  used by: {', '.join(sorted(g['users']))}")
+            st = statuses.get(key)
+            if st in ("proved", "refuted"):
+                out(f"  ! {key} is {st}: drop the line, or revisit the work that builds on it")
+    pointed = set(groups)
+    unref = [a for a in argument_files if a not in pointed]
+    if argument_files:
+        out(f"Argument files no @assumes line points to: {len(unref)} of {len(argument_files)}"
+            + (f" ({', '.join(unref)})" if unref else ""))
+    return 0
+
+
+# --- selftest ----------------------------------------------------------------
+
+def _conj(cid: str, status: str, qs: str, body: str) -> str:
+    return (f"---\nid: {cid}\nstatus: {status}   # comment\nquestions: [{qs}]\n"
+            f"question-tie: t\nfamily: f\n---\n# {cid}: s\n## Evidence\n## Next steps\n{body}")
+
+
+def selftest() -> int:
+    failed = 0
+
+    def expect(label: str, cond: bool, detail: str = "") -> None:
+        nonlocal failed
+        print(f"{'ok  ' if cond else 'FAIL'} {label}" + (f": {detail}" if not cond and detail else ""))
+        failed += not cond
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "project.toml").write_text('[conjectures]\ndir = "led"\n', encoding="utf-8")
+        q = root / "wiki/questions"
+        led = root / "led"
+        q.mkdir(parents=True)
+        led.mkdir()
+        for qid, st in (("Q001", "active"), ("Q002", "active"), ("Q003", "proposed")):
+            (q / f"{qid}-x.md").write_text(f"---\nid: {qid}\nstatus: {st}\n---\n", encoding="utf-8")
+        # allocation order puts Q002 before Q001
+        (q / "_index.md").write_text("| [Q002](Q002-x.md) |\n| [Q001](Q001-x.md) |\n", encoding="utf-8")
+        (led / "C001-a.md").write_text(_conj("C001", "proved", "Q001",
+                                             "@residue: extend to the next range\n"), encoding="utf-8")
+        (led / "C002-b.md").write_text(_conj("C002", "open", "Q002",
+                                             "- `@residue`: search for a counterexample\n"
+                                             "Mention of @residue: in prose is not a residue\n"),
+                                       encoding="utf-8")
+        (led / "C003-c.md").write_text(_conj("C003", "testing", "Q003",
+                                             "@residue: parked step\n"), encoding="utf-8")
+        (led / "C004-d.md").write_text(_conj("C004", "supported", "Q001",
+                                             "@priority do this first\nactivated-by: Ada\n"
+                                             "@residue: the owner's step\n"), encoding="utf-8")
+        (led / "C005-e.md").write_text(_conj("C005", "supported", "Q001",
+                                             "@priority set by an agent\n@residue: unmarked\n"),
+                                       encoding="utf-8")
+        (led / "C006-f.md").write_text(_conj("C006", "supported", "Q001", "nothing\n"), encoding="utf-8")
+        (led / "TEMPLATE.md").write_text(_conj("CNNN", "open", "QNNN", "@residue: x\n"), encoding="utf-8")
+
+        lines: list[str] = []
+        report(root, False, True, lines.append)
+        ids = [ln.split("\t")[0] for ln in lines[1:]]
+        expect("settled conjectures' residues are listed", "C001" in ids)
+        expect("parked conjectures listed without --eligible", "C003" in ids)
+        expect("TEMPLATE.md ignored", "CNNN" not in ids)
+        expect("prose mention is not a residue", len([i for i in ids if i == "C002"]) == 1)
+        expect("owner-marked @priority first", ids[:1] == ["C004"], str(ids))
+        expect("@priority without activated-by is ignored",
+               any(ln.startswith("C005\tsupported\tno") for ln in lines), str(lines))
+        expect("allocation order: Q002 before Q001", ids.index("C002") < ids.index("C001"), str(ids))
+        lines = []
+        report(root, True, True, lines.append)
+        ids = [ln.split("\t")[0] for ln in lines[1:]]
+        expect("--eligible drops conjectures on a non-active question", "C003" not in ids, str(ids))
+        lines = []
+        report(root, False, False, lines.append)
+        text = "\n".join(lines)
+        expect("settled conjecture without residue is named", "C006 (supported)" in text, text)
+        expect("bullet/backtick residue parsed", "search for a counterexample" in text, text)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        lines = []
+        report(Path(tmp), False, False, lines.append)
+        expect("missing ledger folder is not an error", lines == ["no conjectures found"], str(lines))
+        lines = []
+        assumes_report(Path(tmp), lines.append)
+        expect("no @assumes lines is said plainly", lines and lines[0].startswith("no @assumes"), str(lines))
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "project.toml").write_text('[attempts]\ndir = "att"\n', encoding="utf-8")
+        led = root / "wiki/conjectures"
+        led.mkdir(parents=True)
+        (led / "C001-a.md").write_text(_conj("C001", "proved", "Q001", ""), encoding="utf-8")
+        (led / "C002-b.md").write_text(_conj("C002", "open", "Q001",
+                                             "@assumes: C001 — the lift holds — argued (heuristic)\n"),
+                                       encoding="utf-8")
+        w = root / "work/lemma"
+        w.mkdir(parents=True)
+        (w / "argument.md").write_text("# Argument: the bound is uniform\nLabels: heuristic\n", encoding="utf-8")
+        (w / "orphan.md").write_text("# Argument: unused\n", encoding="utf-8")
+        (w / "README.md").write_text(
+            "- @assumes: work/lemma/argument.md -- the bound is uniform -- argued "
+            "(heuristic + model-only (random model of the primes))\n", encoding="utf-8")
+        (root / "work/TEMPLATE").mkdir()
+        (root / "work/TEMPLATE/README.md").write_text("@assumes: X — template — argued (moral)\n",
+                                                      encoding="utf-8")
+        (root / "att").mkdir()
+        (root / "att/L001-x.md").write_text("@assumes: C001 — the lift holds — argued (heuristic)\n",
+                                            encoding="utf-8")
+        lines = []
+        assumes_report(root, lines.append)
+        text = "\n".join(lines)
+        expect("lines grouped by what is assumed, with every user",
+               "used by: att/L001-x.md, wiki/conjectures/C002-b.md" in text, text)
+        expect("combined labels and a model in parentheses parse",
+               "argued (heuristic + model-only (random model of the primes))" in text, text)
+        expect("a line on a proved conjecture is flagged", "! C001 is proved" in text, text)
+        expect("work/TEMPLATE is ignored", "template" not in text, text)
+        expect("an argument file nothing points to is counted",
+               "1 of 2 (work/lemma/orphan.md)" in text, text)
+
+    print(f"residues selftest: {failed} failed")
+    return 1 if failed else 0
+
+
+def main(argv: list[str]) -> int:
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return 0
+    if "--selftest" in argv:
+        return selftest()
+    root = Path(__file__).resolve().parent.parent
+    if "--root" in argv:
+        i = argv.index("--root")
+        if i + 1 >= len(argv):
+            print("--root needs a directory", file=sys.stderr)
+            return 2
+        root = Path(argv[i + 1]).resolve()
+    known = {"--eligible", "--tsv", "--root", "--assumes"}
+    for a in argv:
+        if a.startswith("-") and a not in known:
+            print(f"unknown option {a}; see --help", file=sys.stderr)
+            return 2
+    if "--assumes" in argv:
+        return assumes_report(root)
+    return report(root, "--eligible" in argv, "--tsv" in argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,14 @@
+## Stopping and resuming
+
+{{#if !modules.tiers}}
+{{#if !modules.lean}}
+- **brick**: one self-contained unit of work with a stated finish line: a lemma to prove, a script to write and validate, a table to fill. Remaining work is always written as a numbered list of bricks.
+{{/if}}
+{{/if}}
+- **deep core**: the genuinely hard, open part of a piece of work, the step no known method handles directly. Calling something a deep core is a claim that must be earned by listing the bricks around it first.
+- **reduce (before reporting blocked)**: restate a problem so that its hard step appears as one explicit, named hypothesis, and finish everything else. The hard step is then isolated, often smaller than it looked, and the work around it is done.
+- **design progress doc**: the `README.md` of a work folder (`work/<slug>/README.md`) that holds a multi-step effort's plan, its RESUME HERE section and its progress log (template: `docs/templates/design-progress-doc.md`).
+- **RESUME HERE**: the short section at the top of a design progress doc that names the exact next step, so a fresh session can continue from the file alone.
+- **progress log**: the dated, append-only list at the bottom of a design progress doc, one entry per checkpoint.
+- **continue signal**: either the owner's most recent message says "continue", "keep going" or similar, or a standing mandate from earlier in the session that the owner has not withdrawn. With one, keep working through milestones; without one, finish the task you were given and stop (see `docs/discipline/stopping.md`).
+- **autonomous mandate**: an explicit owner instruction to keep working for a long stretch without them ("keep going until blocked or done"). A standing mandate is one kind of continue signal. It is a standing mode, not a grant for one step.

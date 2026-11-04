@@ -1,0 +1,49 @@
+# formal/: the Lean formalization
+
+Machine-checked proofs for {{project.name}}. The rules for working here are in
+[../docs/discipline/lean.md](../docs/discipline/lean.md).
+
+{{#if stack.lake_path}}
+## The Lean project
+
+The Lake project is `{{stack.lake_path}}` (set as `lake_path` under `[stack]` in
+`project.toml`). Build it with `bin/lean-build`, never a bare `lake build`; check a finished
+result with `bin/lean-build --axioms <Module> <declaration>`. Search the library by
+declaration name with `bin/lib-find <name-regex>`.
+If `lake_path` points to an existing project outside this repository, init-math did not touch
+it. Commit its `lean-toolchain` and `lake-manifest.json` in that project, or add it here as a
+submodule.
+{{else}}
+## Setting up the Lean project (not done yet)
+
+No Lean project exists yet. When you are ready, run these yourself (they download the
+library cache, several GB).
+
+In the `formal/` directory (create it if missing):
+
+```sh
+lake new Proofs math        # creates Proofs/ using Mathlib; one word, no hyphens
+```
+
+`lake new` also writes the `lean-toolchain` pin. Then, in `formal/Proofs`:
+
+```sh
+lake exe cache get          # fetch compiled library files instead of building them
+```
+
+Then set `lake_path = "formal/Proofs"` under `[stack]` in `project.toml`. After that,
+`bin/lean-build` builds the project and `bin/lib-find` searches its library.
+{{/if}}
+
+## Layout
+
+- One file per topic under the project's source directory; each top-level result carries a
+  docstring naming the statement it formalizes (a paper's theorem number, or a link to the
+  note that states it).
+- A result counts as done only when it has no `sorry` and `#print axioms` lists nothing
+  beyond `propext`, `Classical.choice` and `Quot.sound`.
+- Keep the library version pinned (`lean-toolchain` and the lake manifest are committed in
+  the Lean project's repository; for an outside project, commit them there or add it as a
+  submodule); bump it deliberately, in its own commit.
+- Each top-level result's docstring names the statement{{#if modules.conjectures}} or conjecture id{{/if}} it formalizes{{#if modules.conjectures}}
+  (for example C003){{/if}}.

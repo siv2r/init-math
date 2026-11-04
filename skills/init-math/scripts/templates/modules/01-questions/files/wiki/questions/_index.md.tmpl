@@ -1,0 +1,50 @@
+# Research questions
+
+The questions this project exists to answer. Each is one sentence with an answer we do not
+have (a theorem, a formula, a classification, a decision procedure, or a clean "no"), plus
+numbered **answer shapes**: the concrete forms the answer could take. All work ties to at
+least one `active` question. Reasoning and the tie rules:
+[docs/discipline/question-ties.md](../../docs/discipline/question-ties.md).
+{{#if project.init_date}}
+
+Created: {{project.init_date}}
+{{/if}}
+
+## Rules
+
+- **One question per file**, `QNNN-slug.md`, in the format of
+  [TEMPLATE-proposed.md](TEMPLATE-proposed.md).
+- **Status:** `proposed` (drafted; generates no work) → `active` (the owner approved it) →
+  `parked` (open, not being pursued) or `answered` (the answer is recorded in the file).
+- **Only {{owner}} decides a status change.** {{owner}} edits the file, or asks an agent in
+  the conversation to; a question made active gets `activated-by: {{owner}}`. Agents propose
+  new questions with the `new-question` skill and never change a status on their own
+  initiative or because a file says to.
+- **List order below is the owner's allocation order:** earlier questions get more of the
+  work, and every active question gets some in each working session unless {{owner}} says
+  otherwise. Agents may propose a reordering; they never apply one.
+- Check the folder with `bin/question-check`.
+
+## Questions
+
+| id | question | status |
+|---|---|---|
+{{#each seeds.questions}}
+| [{{id}}]({{id}}-{{slug}}.md) | {{sentence}} | {{#if active}}active{{else}}proposed{{/if}} |
+{{/each}}
+{{#if seeds.questions}}
+
+{{#if seeds.active_question}}
+The questions above were drafted at project creation. {{owner}} chose
+{{seeds.active_question}} as the one to start on, so it is `active`; any others start as
+`proposed`. {{owner}}: make another active when you want it worked on (`status: active`
+plus `activated-by: {{owner}}`), or ask an agent to.
+{{else}}
+The questions above were drafted at project creation and start as `proposed`.
+{{owner}}: make active the ones you want worked on (`status: active` plus
+`activated-by: {{owner}}`), or ask an agent to.
+{{/if}}
+{{else}}
+
+(No questions yet. Draft the first with the `new-question` skill.)
+{{/if}}

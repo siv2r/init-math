@@ -1,0 +1,10 @@
+## Long runs
+
+{{#if !modules.tiers}}
+- **long job**: a build, sweep or computation that may run longer than about two minutes.
+{{/if}}
+- **preflight**: the checklist run before launching a long computation (skill `launch-preflight`): is the build fresh, does the method answer the question at these parameters, is the cost bounded, where does the output go.
+- **tracked waiter**: the one thing that will notice when a long job ends and bring its result back to an agent{{#if harness.cap.background_callback}}: either the harness's own completion notice for a background job, or `bin/wait-until-done`{{else}}: here, the agent itself running the job in the foreground, or `bin/wait-until-done`{{/if}}. A job with no tracked waiter is orphaned.
+- **heartbeat**: a progress line printed every few seconds by a long job (`bin/heartbeat`), with a warning when the job goes quiet for too long (a stall).
+- **deliverable**: the thing a run is for (an output file, a table, a certificate), as opposed to its exit code.
+- **run record**: a directory `runs/<timestamp>/` written by `bin/bg-run --runs` holding the command, its process id, its output and, at the end, its exit code, so a later session can tell finished from still-running from died. Git ignores the top-level `runs/` folder: the records are read on disk, never committed.

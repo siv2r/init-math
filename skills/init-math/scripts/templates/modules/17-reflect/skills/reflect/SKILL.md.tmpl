@@ -1,0 +1,135 @@
+---
+name: reflect
+description: Run a reflection pass — read the friction, failures and owner feedback logged since the last pass, find what keeps recurring, and turn it into small tested workflow fixes (applied directly when safe, proposed to the owner otherwise). Load it when the owner asks to reflect, when a failure nudge suggests a pass, or when friction has piled up — at a natural stopping point, never mid-task.
+---
+
+# Reflection pass
+
+Reasoning and record formats: `docs/discipline/reflection-loop.md`. Routing rules:
+`notes/reflect-autonomy-heuristics.md`. Run this in the main session at a stopping point;
+a worker never runs a pass.
+
+## 1. Read what is new — once
+
+```bash
+bin/journal --show-new
+bin/journal --summary
+```
+
+`--show-new` prints the unreviewed rows of `logs/friction.jsonl`, `logs/failures.jsonl`,
+`logs/feedback.jsonl` and the new lines of `notes/workflow-journal.md`, and **records
+exactly what it printed**. Do not run it again in this pass: a row logged during the pass
+must stay new for the next one. Read `priority: now` friction rows first. If nothing is new,
+say so and stop.
+
+Also read `logs/nudges.jsonl`: a nudge that fires often, especially one usually followed by
+the same action anyway, is a cluster like any other. Narrow it if its pattern is too broad
+(AUTO: a repair), or propose removing it (ASK: it removes a mechanism). And read
+`git log --oneline --grep='reflect auto'` for auto-applied fixes since the last pass.
+{{#if modules.usage}}
+
+Optional: `bin/usage-report --since <date of the last pass>` (the date in the journal's last
+`<!-- reviewed … -->` marker) shows how the model work split between models, and between
+the main thread and subagents, since then. A shift worth acting on (say, the main thread
+now writing most of the output) is a cluster like any other; a model change it suggests is
+ASK-class.
+
+Every pass: read the report's `largest main-thread context` line against the
+auto-compaction limit ({{#if harness.is_claude}}`autoCompactWindow` in `.claude/settings.json`{{else}}`model_auto_compact_token_limit` in `.codex/config.toml`{{/if}}; {{harness.auto_compact_tokens}} at
+init, a starting value). When sessions keep reaching the limit, or it has not been revisited
+in several weeks, a lower limit is a candidate ASK fix: give the measured peak, what a
+lower limit saves (cheaper turns, a more focused main thread) and what it risks (details not
+written to disk are lost at each compaction). Do not propose it again after {{owner}}
+declined it unless the numbers changed.
+{{/if}}
+
+## 2. Cluster
+
+Group the rows by theme: the same failure signature, the same kind of friction, the same
+correction from {{owner}}. Count each cluster. A single row is a cluster of one — note it,
+but a rule from one incident is ASK-class at best.
+
+An intake question {{owner}} has answered the same way twice (in the work folders' recorded
+intake answers, or the conversation) is a candidate standing procedure: propose the line for
+`notes/procedures.md`. Always ASK: only {{owner}} edits that file.
+{{#if modules.questions}}
+
+Read the `override:` lines in the work folders' READMEs: tasks {{owner}} ran although the
+tie-auditor did not pass them. Two overrides with the same kind of reason are a candidate
+standing exception, so the auditor fits {{owner}}'s judgment instead of being overruled each
+time: propose the line for `### Standing exceptions` in `docs/discipline/question-ties.md`
+(what kind of task, and what the auditor should accept for it). Always ASK.
+{{/if}}
+
+## 3. Place each cluster on the ladder
+
+Search for an existing rule first: `grep -rn "<keyword>" AGENTS.md {{#if harness.coordinator_file}}{{harness.coordinator_file}} {{/if}}docs/ notes/ hooks/`
+and the `REFLECT` lines of the journal (was this proposed and declined before?).
+
+- **No rule yet** → a prose fix (a sentence in a discipline doc or a skill) is usually
+  right.
+- **Recurred despite a rule** → propose a mechanism (a nudge hook, a scan, a template
+  field), not the same sentence again. Keeping it prose is allowed if you say why.
+- **A nudge exists and is ignored, and the failure is costly** → consider a hard check
+  (always ASK).
+
+## 4. Draft fixes (at most four) and route each one
+
+Draft at most four fixes, one per cluster that warrants one; a pass that finds nothing worth
+changing says so.
+
+For each fix write: the friction it answers (with the row count), the change, its
+**narrowest scope**, and its **anti-scope** (what it must not gate; its cost). Then route it
+with `notes/reflect-autonomy-heuristics.md`:
+
+- **AUTO** (all five AUTO conditions hold) → apply it now. A hook change gets its four-branch
+  selftest (`docs/discipline/hook-authoring.md`); run `bin/selftest` and proceed only on exit 0.
+  Commit just that fix:
+
+  ```bash
+  git add -- <the fix's files>
+  git commit -m 'chore(reflect auto): <what>' -- <the fix's files>
+  bin/journal --add journal "[auto-applied] <what> — <why> (rule: AUTO-n; undo: git revert <sha>)" --kind REFLECT
+  ```
+
+- **ASK** (any ASK condition holds, or it is a boundary case) → do not apply. Queue it:
+
+  ```bash
+  bin/journal --propose "<the change in plain words — why — what it costs>" --source reflect
+  ```
+
+  It prints the proposal's id (`P…`) and writes the journal line. Then put every pending
+  proposal (`bin/journal --pending`) to {{owner}} with the tradeoff and your recommendation,
+{{#if harness.cap.ask_tool}}
+  with the structured ask tool when there are several to accept or decline,
+{{else}}
+  numbered, so {{owner}} can answer "yes to 1 and 3",
+{{/if}}
+  and run `bin/journal --shown`. On a yes: apply, test and commit in the same turn
+  (`chore(reflect): <what>`), then `bin/journal --decide <id> yes`. On a no:
+  `bin/journal --decide <id> no --reason "<their reason>"`. A "continue" decides nothing:
+  the proposal stays pending, and a reminder at the end of a later turn brings it back.
+  Never record a proposal only in a notes file: the queue is how it reaches {{owner}}.
+
+Before sending, reread the proposals as {{owner}} will: someone who knows the project but
+did not see this session. Replace every reference to this session's events, shorthand or
+run names with plain words.
+
+## 5. Audit AUTO routing
+
+For each auto-applied fix since the last pass: did {{owner}} revert, narrow or object to
+it? Add a row to the tables in `notes/reflect-autonomy-heuristics.md` either way. An
+objection of class A (one incident made into a rule) or C (a permission widened) means the
+AUTO clause is too loose — propose tightening it (ASK).
+
+## 6. Close the pass
+
+```bash
+bin/journal --add journal "pass: <n> rows read; <clusters>; <k> auto-applied, <m> proposed" --kind REFLECT
+bin/journal --mark-reviewed
+```
+
+`--mark-reviewed` marks only what step 1 printed and inserts the `<!-- reviewed -->`
+marker into the journal at that point. Commit the journal and the heuristics file
+(`chore(reflect): pass <date>`). Report to {{owner}}: what was applied (with how to undo
+it), the pending proposals as a numbered list (step 4), and what was left alone and why.

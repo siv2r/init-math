@@ -1,0 +1,13 @@
+kind = "flawed"
+error_class = "misapplied result: integral basis Z[cube root of m] used for m ≡ 1 mod 9, where its hypothesis fails"
+location = "the step 'Since 10 = 2 · 5 is squarefree, the description of the ring of integers of a pure cubic field quoted below gives O_K = Z[α]'"
+catch = "says the cited integral-basis result gives O_K = Z[α] only when m is not congruent to +-1 mod 9, and 10 is congruent to 1 mod 9, so O_K is strictly larger than Z[α] (it contains (1 + α + α^2)/3), 3 divides the index, and Dedekind-Kummer cannot be applied at 3; ideally notes that in fact d_K = -300 and 3O_K = P^2 Q, so the statement is false"
+audited = "2026-10-28, Claude Fable 5.1: Sage: disc K = -300, integral basis has (1+a+a^2)/3, 3O_K = P^2 Q; Hensel check 4^3 = 10 mod 27; cited pure-cubic basis checked for m = 2, 17, 19, 26; wild-ramification remark correct; catch line tightened (factorization moved behind ideally)"
+# The statement is FALSE.
+# Verified in Sage (K.<a> = NumberField(x^3 - 10)): K.discriminant() = -300 (disc(f) = -2700);
+# integral basis [(a^2 + a + 1)/3, a, a^2]; (1 + a + a^2)/3 has minimal polynomial
+# x^3 - x^2 - 3x - 3; K.factor(3) = P1^2 * P2 with both primes of norm 3.
+# Independent check: 4^3 = 64 ≡ 10 (mod 27) and v_3(f(4)) = 3 > 2 v_3(f'(4)) = 2, so f has a
+# root in Z_3, so some prime above 3 is unramified of degree 1.
+# Everything else in the proof (Eisenstein, the discriminant of f, the factorization of f mod 3,
+# the wild-ramification remark) is correct; only O_K = Z[α] is wrong.

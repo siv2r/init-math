@@ -1,0 +1,181 @@
+# Writing for a reader
+
+This is the charter of the `expositor` and `provenance` reviewers, and the checklist for
+anyone drafting a write-up that people outside the project will read. The order in which
+the reviewers run is in the `gate-chain` skill.
+
+## Why this exists
+
+The review gates that keep findings honest (claim-auditor, red-team, the strength-word
+scan) all push in one direction: against over-claiming. Nothing in them represents the
+reader. A document written to survive them drifts toward a qualifier on every claim,
+apparatus before it is needed, and the actual idea buried. It can be honest, true and
+rigorous, and still unreadable, even to its author.
+
+Three failure modes recur:
+
+1. **Defence.** Text written to placate an imagined skeptic: per-claim hedges, "what this
+   is not" asides, machinery dumped up front.
+2. **Hype**, the overcorrection. Text written to sell: "a ... in disguise", "this is not a
+   curiosity", headers that announce the surprise instead of showing it. Defence and hype
+   are one disease: both write *at* a non-peer instead of *to* a peer, and both put remarks
+   about the mathematics where the mathematics should be.
+3. **Passing the unreadable.** A reviewer flags the section where the reader gets lost, then
+   excuses it because "the reader can take it on faith and move on". That is the symptom,
+   not a mitigation: an object presented without its derivation blocks understanding.
+
+## Two documents, two jobs
+
+| | Internal staging document | Reader-facing write-up |
+|---|---|---|
+| Reader | the author and the honesty reviewers | a mathematician who wants to learn and reuse |
+| Records | everything, positive and negative | the settled story only |
+| Reviewers | claim-auditor, red-team, scans | proof-referee, provenance, expositor, cold-reader, and one fidelity check against the staging document, by a fresh claim-auditor |
+| Honesty | exhaustive, per claim; defensive is fine | carried by structure: theorem versus conjecture, plus one roadmap |
+
+Defensive honesty belongs in the staging document. The write-up inherits only settled
+status. The single **fidelity check** confirms the write-up states nothing as proved that
+the staging document records as conjectural, and strengthens no theorem in translation. A
+fresh `claim-auditor` does it, given both documents: the author is the reader least able to
+see where a translation strengthened a claim. An
+argued claim (`docs/discipline/informal-arguments.md`) keeps its label in the write-up.
+{{#if modules.attempts}}
+It has a second half, in the same brief: compare the write-up's account of how the result was reached with the
+record ({{#if modules.conjectures}}the ledger, {{/if}}`bin/attempts --target <id>` and the work folder). Flag a reconstruction
+that hides a step the record shows was hard, or claims a motivation the record contradicts.
+The auditor returns it as a table: step, the record says, the write-up says.
+{{/if}}
+
+Anti-scope: a short internal note that nobody outside the project reads needs only the
+honesty reviewers. When it is unclear whether people outside the project will read a
+document, ask {{owner}} before choosing its reviewers.
+
+## The rules, in the order the reader meets them
+
+**A. Open with the reason to care.** Show what is surprising, the new way of seeing it, and
+what it connects to, before the machinery. State it plainly and exhibit it in an example;
+do not announce that it is striking. Give one throughline and return to it.
+
+**B. Fix the reader and the conversation.** Name the intended reader and what they already
+know well. The conversation is inquiry and teaching (hand a peer a reusable tool), not
+persuasion against a skeptic. How much of each step to spell out depends on that reader.
+
+**C. Global before local.** Give the outline, then the detail. Introduce apparatus only when
+it is needed; split long arguments into lemmas. A sketch at the top does not excuse an
+unmotivated derivation beneath it: the two are checked separately.
+
+**D. Motivate every step.** Each nontrivial step, and each load-bearing claim inside it,
+needs its **role** (what it does; what would break without it) and, where possible, its
+**insight** (where it could have come from). Name objects in standard form ("this is a
+quadratic in t", "this is a Möbius transformation") so the reader's own knowledge fires.
+Before a reduction, say why it is the right reduction. Build the proof on the feature that
+makes the result striking (a symmetry, a uniqueness), so the hook and the engine are the
+same object.
+
+**E. Substance over apparatus.** The payload is the reusable method, not only the theorem
+headline; make it visible. Rigor is the reader seeing why each step holds, not formal
+density. Give every formal object its meaning at the point it appears. "The reader can take
+this on faith" raises the severity of a gap; it never lowers it.
+
+**F. Precise, defined, justified, cited where relevant.** Use the exact standard term
+(subspace, quotient) rather than a coined phrase. Define every term and symbol before first
+use. Justify the easy-but-important claims and every scope or exclusion claim. Cite only
+what bears on the sentence.
+
+**G. Honesty by structure; no defence, no hype.** A claim's status sits on the claim once,
+through its environment, plus a single roadmap ("Sections 2–3 are background except 3.4").
+Cut contentless negations and editorial remarks about the paper's own interest. An
+application motivates the object once, up front; do not re-invoke it as a refrain. Name and
+value the part that is already understood (for instance the cases a symmetry forces) rather
+than calling it a nuisance, and state the result at the generality it achieves.
+
+**H. Show, don't only tell.** Examples before abstraction; let definitions arise from a
+concrete question. An example does the work (computes the gcd, exhibits the factorization)
+instead of asserting its conclusion, carries through to the general object, and defines a
+term by the example rather than pointing ahead to a definition not yet read.
+
+## Provenance: what is new, what is {{owner}}'s, what is classical
+
+A separate question from readability, and a separate reviewer, so the expositor is never
+tempted to strip good exposition for being "not new". For every substantive result the
+`provenance` reviewer asks: new, from {{owner}}'s prior work, or classical?
+
+- **Someone else's result:** add a citation, never cut. The reader cannot be assumed to know
+  the literature; a clean exposition of it earns its place.
+- **{{owner}}'s own prior work:** the intended reader is assumed to have read it, so a
+  re-derivation is apparatus they already have. Here, and only here, cite it out.
+- Every specific attribution ("Theorem 4.2 of …") is checked against the source text before
+  it is written.
+
+{{#if exposition.prior_work}}
+**{{owner}}'s prior work** (the provenance reviewer reads this list; add to it as you publish):
+
+{{#each exposition.prior_work}}
+- {{.}}
+{{/each}}
+{{else}}
+**{{owner}}'s prior work** (fill in; the provenance reviewer reads this list):
+
+- <title, year, where to find it, which results the project reuses>
+{{/if}}
+
+## Positive models
+
+The best guide to the voice wanted is a text {{owner}} already writes or admires.
+
+{{#if exposition.model_text}}
+**{{owner}}'s model text** (the write-ups should follow its voice; it decides voice, order and
+density where the general rules above conflict with it, while the rules on defined symbols,
+motivated steps and examples that compute (F, D, H) still apply):
+
+- {{exposition.model_text}}
+{{else}}
+**{{owner}}'s model text:** <fill in: a paper, thesis or book whose voice the write-ups
+should follow. It decides voice, order and density where the general rules above conflict
+with it; the rules on defined symbols, motivated steps and examples that compute (F, D, H)
+still apply.>
+{{/if}}
+
+General models of the qualities above:
+
+- Vakil, *The Rising Sea* (foundations of algebraic geometry): choose the framing that makes
+  the hard thing natural; explain why a definition is the right one; exercises woven in.
+- Boneh and Shoup, *A Graduate Course in Applied Cryptography*: motivate each definition by
+  the goal or attack it answers before formalizing it.
+- Lockhart, *Measurement*: narrative, no jargon, discovery-driven, the reader as companion.
+
+## Theory behind the rules
+
+From the philosophy of mathematical practice. Verify any specific claim against the source
+before citing it in a paper.
+
+- Morris (2020), "Motivated proofs: what they are, why they matter and how to write them",
+  Review of Symbolic Logic 13(1):23–46, arXiv:2001.02657. Role and insight motivation; the
+  reader's resources; managing information.
+- Aberdein (2006), "The informal logic of mathematical proof", in R. Hersh (ed.), 18
+  Unconventional Essays on the Nature of Mathematics, Springer, 56–70, arXiv:math/0306298.
+  Warrant, backing, qualifier; dialogue types (inquiry, persuasion, teaching).
+- Sinclair (2004), "The roles of the aesthetic in mathematical inquiry", Mathematical
+  Thinking and Learning 6(3):261–284. Surprise, new ways of seeing and fruitfulness as
+  motivation.
+- Rav (1999), "Why do we prove theorems?", Philosophia Mathematica 7(1):5–41. Proofs, not
+  theorems, carry the knowledge; meaning must accompany formalism.
+- CadwalladerOlsker (2011), "What do we mean by mathematical proof?", Journal of
+  Humanistic Mathematics 1(1):33–60. Rigor is not formalization; the structural,
+  global-then-detail proof.
+- Hanna (2018), "Reflections on proof as explanation", in A. J. Stylianides and G. Harel
+  (eds.), Advances in Mathematics Education Research on Proof and Proving (ICME-13
+  Monographs), Springer, 3–18. An explanatory proof exploits the result's salient
+  feature.
+
+## Checklist before a write-up goes to a reviewer
+
+- [ ] The intended reader is named, and the brief to each reviewer says who it is.
+- [ ] The opening shows the result and an example before any machinery.
+- [ ] Every symbol and term is defined before its first use.
+- [ ] Every load-bearing step says what it does and where it comes from.
+- [ ] Status is carried by environments and one roadmap, not per-claim hedges.
+- [ ] No adjectives about the paper's own interest; no "this is not ..." asides without content.
+- [ ] Each example computes what it claims.
+- [ ] {{owner}}'s prior work is cited, not re-derived; others' results are cited.
+- [ ] The write-up's claims match the staging document's recorded status.

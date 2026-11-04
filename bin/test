@@ -1,0 +1,4 @@
+#!/bin/sh
+# Run the init-math test suite from anywhere.
+cd "$(dirname "$0")/.." || exit 1
+exec python3 -B -m unittest discover -s tests "$@"

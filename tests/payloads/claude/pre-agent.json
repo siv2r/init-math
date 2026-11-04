@@ -1,0 +1,1 @@
+{"session_id":"s1","transcript_path":"/tmp/t.jsonl","cwd":"/tmp/proj","hook_event_name":"PreToolUse","tool_name":"Agent","tool_input":{"description":"audit","prompt":"Audit wiki/conjectures/C001-x.md","subagent_type":"claim-auditor"}}

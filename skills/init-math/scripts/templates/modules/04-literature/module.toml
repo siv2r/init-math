@@ -1,0 +1,14 @@
+id = "literature"
+number = 4
+title = "Literature wiki"
+group = "A"
+status = "included"
+order = 40
+summary = "A wiki for the literature: immutable raw sources, an inbox of sources still to read, synthesized concept articles and reference pages linked both ways, an index per folder and an append-only log. Synthesize a source before experimenting off it."
+
+allow_commands = ["bin/wiki-check"]  # pre-approved: checks only
+
+[[per_item]]
+template = "source.md.tmpl"
+over = "seeds.sources"
+path = "wiki/inbox/{slug}.md"

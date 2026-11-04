@@ -1,0 +1,37 @@
+# Cache manifest
+
+What `cache/` holds and how to use it. The rules behind it are in
+[../docs/discipline/results-cache.md](../docs/discipline/results-cache.md).
+
+## Key
+
+The key columns and the optional canonicalizer are set in `project.toml` under `[cache]`.
+Record here, in words, what a key names and what makes two keys "the same object", so a
+reader can check the canonicalizer does what it claims:
+
+The owner or the first agent to cache a value fills this in and sets `[cache] key_columns` to
+match.
+
+- Key columns: _(fill in: e.g. "graph6")_
+- Same object when: _(fill in: e.g. "the graphs are isomorphic")_
+- Canonicalizer: _(fill in: the command, and what normal form it returns)_
+
+## Tables
+
+| Table | Quantities | Produced by | Cost per row | Notes |
+|---|---|---|---|---|
+| _(e.g. `results/chromatic.tsv`)_ | _(e.g. `chromatic_number`, `cost_seconds`)_ | _(script or experiment)_ | _(e.g. "~1 s at 30 vertices")_ | |
+
+Every table is tab-separated with the header `<key columns> quantity value provenance date`.
+{{#if modules.experiments}}
+Experiments may keep their own table at `experiments/<slug>/results-catalog.tsv` in the same
+format; `bin/cache lookup` reads those too, so they need no row here.
+{{/if}}
+
+## Commands
+
+```
+bin/cache lookup <key...> [--quantity Q]
+bin/cache append cache/results/<table>.tsv <key...> <quantity> <value> <provenance> [--force]
+bin/cache coverage
+```

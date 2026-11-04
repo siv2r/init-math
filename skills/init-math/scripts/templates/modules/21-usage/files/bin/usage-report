@@ -1,0 +1,399 @@
+#!/usr/bin/env python3
+"""Summarize the token counts in logs/usage.jsonl: by model, role, day, week or session.
+
+selftest: yes
+
+Zero-model and read-only, except --backfill, which appends to logs/usage.jsonl. The rows
+are written by hooks/usage-log.py as the work happens; formats and meanings in
+docs/discipline/usage.md. Counts are tokens, not money: with no rates in [usage.prices]
+of project.toml the report shows tokens only.
+
+Usage:
+  bin/usage-report                     totals by model and by role, the main-thread vs
+                                       subagent share of output, the largest main-thread
+                                       context against the auto-compaction limit, the
+                                       latest plan limits; above them, a count of
+                                       transcripts the hook could not read
+                                       (usage-format-unknown in logs/failures.jsonl)
+  bin/usage-report --by day            one grouping: model | role | day | week | session
+  bin/usage-report --since 2026-10-01  only rows from that UTC day on
+  bin/usage-report --json              the same, as JSON
+  bin/usage-report --backfill          first import sessions the hook did not see, from
+                                       the harness's own store (rows already logged are
+                                       skipped). Claude Code deletes old transcripts
+                                       (`cleanupPeriodDays`, default 30), so older
+                                       sessions are gone for good.
+  bin/usage-report --backfill --transcripts DIR
+                                       import from DIR (every *.jsonl under it, either
+                                       harness) instead of the harness's store
+  bin/usage-report --selftest          run the built-in tests
+Options:
+  --root DIR   act on the project at DIR instead of the one this script lives in
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import io
+import json
+import shutil
+import sys
+import tempfile
+import tomllib
+from contextlib import redirect_stdout
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(HERE / "hooks"))
+import _usage  # noqa: E402
+
+COUNTS = _usage.COUNTS
+BY = ("model", "role", "day", "week", "session")
+PRICE_KEYS = ("input", "output", "cache_read", "cache_write")
+
+
+def load_toml(root: Path) -> dict:
+    p = root / "project.toml"
+    if not p.exists():
+        return {}
+    with open(p, "rb") as f:
+        return tomllib.load(f)
+
+
+def compact_limit(root: Path) -> int | None:
+    """The auto-compaction limit the harness config sets, or None if it sets none."""
+    try:
+        with open(root / ".codex" / "config.toml", "rb") as f:
+            v = tomllib.load(f).get("model_auto_compact_token_limit")
+            if v:
+                return int(v)
+    except (OSError, tomllib.TOMLDecodeError, TypeError, ValueError):
+        pass
+    try:
+        v = json.loads((root / ".claude" / "settings.json").read_text()).get("autoCompactWindow")
+        return int(v) if v else None
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def tier_of(model: str, tiers: dict) -> str:
+    """'strong' / 'worker' when the model is (or contains) that tier's model name."""
+    m = model.lower()
+    for name in ("strong", "worker"):
+        t = str(tiers.get(name) or "").lower()
+        if t and (m == t or t in m):
+            return name
+    return "other"
+
+
+def price_for(model: str, prices: dict) -> dict | None:
+    """The [usage.prices] entry for a model: an exact key, else the longest key it contains."""
+    if model in prices and isinstance(prices[model], dict):
+        return prices[model]
+    keys = [k for k in prices if isinstance(prices[k], dict) and k.lower() in model.lower()]
+    return prices[max(keys, key=len)] if keys else None
+
+
+def key_of(r: dict, by: str, tiers: dict) -> str:
+    if by == "model":
+        return r.get("model") or "unknown"
+    if by == "role":
+        label = "main" if r.get("role") == "main" else f"subagent:{r.get('agent_type') or '?'}"
+        return f"{label} [{tier_of(r.get('model') or '', tiers)}]"
+    day = (r.get("ts") or "")[:10] or "unknown"
+    if by == "day":
+        return day
+    if by == "week":
+        try:
+            y, w, _ = dt.date.fromisoformat(day).isocalendar()
+            return f"{y}-W{w:02d}"
+        except ValueError:
+            return "unknown"
+    return f"{r.get('harness', '?')}:{r.get('session') or '?'}"
+
+
+def summarize(rows: list[dict], bys: list[str], tiers: dict, prices: dict,
+              limit: int | None = None) -> dict:
+    usage = [r for r in rows if r.get("kind", "usage") == "usage"]
+    out: dict = {"total": _blank(), "groups": {}, "share": {}, "limits": None, "cost": None}
+    # Rows written before peak_context existed have none; they count as unknown, not 0.
+    peaks = [_int(r.get("peak_context")) for r in usage
+             if r.get("role") == "main" and r.get("peak_context")]
+    out["context"] = {"main_peak": max(peaks) if peaks else None, "compact_limit": limit,
+                      "main_days_near_limit": sum(1 for p in peaks if limit and p >= 0.9 * limit)}
+    for r in usage:
+        _add(out["total"], r)
+    for by in bys:
+        g: dict[str, dict] = {}
+        for r in usage:
+            _add(g.setdefault(key_of(r, by, tiers), _blank()), r)
+        out["groups"][by] = dict(sorted(g.items(), key=lambda kv: (-kv[1]["output"], kv[0]))
+                                 if by in ("model", "role", "session") else sorted(g.items()))
+    main = sum(_int(r.get("output")) for r in usage if r.get("role") == "main")
+    sub = sum(_int(r.get("output")) for r in usage if r.get("role") != "main")
+    tot = main + sub
+    out["share"] = {"main_output": main, "subagent_output": sub,
+                    "main_pct": round(100 * main / tot, 1) if tot else None,
+                    "subagent_pct": round(100 * sub / tot, 1) if tot else None}
+    lim = [r for r in rows if r.get("kind") == "limits"]
+    if lim:
+        out["limits"] = max(lim, key=lambda r: r.get("ts") or "")
+    if prices:
+        cost, unpriced = 0.0, set()
+        per_model: dict[str, float] = {}
+        for r in usage:
+            p = price_for(r.get("model") or "", prices)
+            if p is None:
+                unpriced.add(r.get("model") or "unknown")
+                continue
+            c = sum(_int(r.get(k)) * float(p.get(k, 0) or 0) for k in PRICE_KEYS) / 1e6
+            cost += c
+            per_model[r.get("model") or "unknown"] = per_model.get(r.get("model") or "unknown", 0) + c
+        out["cost"] = {"usd": round(cost, 4), "by_model": {k: round(v, 4) for k, v in per_model.items()},
+                       "unpriced_models": sorted(unpriced)}
+    return out
+
+
+def _blank() -> dict:
+    return {"calls": 0, **{k: 0 for k in COUNTS}}
+
+
+def _int(x) -> int:
+    try:
+        return int(x or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _add(acc: dict, r: dict) -> None:
+    acc["calls"] += _int(r.get("calls"))
+    for k in COUNTS:
+        acc[k] += _int(r.get(k))
+
+
+def _fmt_table(title: str, groups: dict) -> list[str]:
+    cols = ("calls", "input", "cache_read", "cache_write", "output", "reasoning")
+    w = max([len(title)] + [len(k) for k in groups])
+    lines = [f"{title:<{w}}  " + "  ".join(f"{c:>13}" for c in cols)]
+    for k, v in groups.items():
+        lines.append(f"{k:<{w}}  " + "  ".join(f"{v[c]:>13,}" for c in cols))
+    return lines
+
+
+def render_text(s: dict, since: str | None) -> str:
+    out = [f"Token usage{' since ' + since if since else ''} (logs/usage.jsonl)", ""]
+    bad = s.get("unreadable")
+    if bad:
+        out += [f"{bad['count']} session record(s) could not be read since {bad['since']}; "
+                "see logs/failures.jsonl (usage-format-unknown). Their tokens are not "
+                "counted below.", ""]
+    out += _fmt_table("total", {"all": s["total"]}) + [""]
+    for by, g in s["groups"].items():
+        out += _fmt_table(f"by {by}", g) + [""]
+    sh = s["share"]
+    if sh["main_pct"] is not None:
+        out.append(f"output tokens: main thread {sh['main_output']:,} ({sh['main_pct']}%), "
+                   f"subagents {sh['subagent_output']:,} ({sh['subagent_pct']}%)")
+    ctx = s.get("context") or {}
+    if ctx.get("main_peak"):
+        line = f"largest main-thread context: {ctx['main_peak']:,} tokens"
+        if ctx.get("compact_limit"):
+            line += (f" (auto-compaction at {ctx['compact_limit']:,}; "
+                     f"{ctx['main_days_near_limit']} row(s) within 10% of it)")
+        out.append(line)
+    lim = s["limits"]
+    if lim:
+        parts = [f"{w} {lim.get(w + '_used_pct')}% of {lim.get(w + '_window_min')} min"
+                 for w in ("primary", "secondary") if lim.get(w + "_used_pct") is not None]
+        out.append(f"plan limits (Codex, {lim.get('plan') or 'plan ?'}, as of {lim.get('ts')}): "
+                   + "; ".join(parts))
+    if s["cost"] is None:
+        out.append("cost: tokens only. For an estimate, add your own rates (US$ per million "
+                   "tokens) under [usage.prices] in project.toml; see docs/discipline/usage.md.")
+    else:
+        c = s["cost"]
+        out.append(f"estimated cost at your [usage.prices] rates: ${c['usd']:,.2f}")
+        if c["unpriced_models"]:
+            out.append(f"  no rate for: {', '.join(c['unpriced_models'])} (not included)")
+    return "\n".join(out) + "\n"
+
+
+def unreadable(root: Path, since: str | None) -> dict | None:
+    """The usage-format-unknown rows in logs/failures.jsonl (from that day on, with
+    --since): transcripts whose token counts the hook could not read, so not in the totals."""
+    seen: dict[str, str] = {}
+    try:
+        lines = (root / "logs" / "failures.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(r, dict) or r.get("signature") != "usage-format-unknown":
+            continue
+        day = str(r.get("ts") or "")[:10]
+        if since and day < since:
+            continue
+        seen.setdefault(str(r.get("id") or line), day)  # merged logs may repeat a row
+    if not seen:
+        return None
+    return {"count": len(seen), "since": min(seen.values()) or "?"}
+
+
+def backfill(root: Path, transcripts: str | None) -> tuple[int, int, int, list[str]]:
+    """Import every transcript the hook did not finish. Returns (files, rows, calls, problems)."""
+    if transcripts:
+        files = sorted(Path(transcripts).rglob("*.jsonl"))
+    else:
+        files = [f for d in _usage.claude_store(root) for f in _usage.claude_files(d)]
+        files += _usage.codex_files(root)
+    rows, problems = _usage.collect(root, [(f, "") for f in files], check_log=True)
+    calls = sum(_int(r.get("calls")) for r in rows if r.get("kind") == "usage")
+    return len(files), len(rows), calls, problems
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="bin/usage-report", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--since", help="YYYY-MM-DD: only rows from that UTC day on")
+    ap.add_argument("--by", choices=BY, help="one grouping (default: model and role)")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--backfill", action="store_true")
+    ap.add_argument("--transcripts", help="with --backfill: read transcripts from DIR")
+    ap.add_argument("--root", default=str(HERE))
+    ap.add_argument("--selftest", action="store_true")
+    a = ap.parse_args(argv)
+    if a.selftest:
+        return selftest()
+    if a.transcripts and not a.backfill:
+        ap.error("--transcripts needs --backfill")
+    if a.since:
+        try:
+            dt.date.fromisoformat(a.since)
+        except ValueError:
+            ap.error("--since takes a date, YYYY-MM-DD")
+    root = Path(a.root)
+    cfg = load_toml(root)
+    tiers = cfg.get("tiers") or {}
+    prices = (cfg.get("usage") or {}).get("prices") or {}
+    if a.backfill:
+        n, nrows, calls, problems = backfill(root, a.transcripts)
+        for p in problems:
+            print(f"WARNING: could not read token counts: {p}", file=sys.stderr)
+        msg = f"backfill: read {n} transcript(s), added {nrows} row(s) covering {calls} response(s)"
+        print(msg, file=sys.stderr if a.json else sys.stdout)
+    rows = _usage.read_rows(root)
+    if a.since:
+        rows = [r for r in rows if (r.get("ts") or "")[:10] >= a.since]
+    s = summarize(rows, [a.by] if a.by else ["model", "role"], tiers, prices, compact_limit(root))
+    s["unreadable"] = unreadable(root, a.since)
+    if a.json:
+        print(json.dumps({"since": a.since, **s}, indent=1, sort_keys=True))
+    else:
+        print(render_text(s, a.since), end="")
+    return 0
+
+
+# --- selftest -----------------------------------------------------------------
+
+def selftest() -> int:
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d) / "proj"
+        (root / "logs").mkdir(parents=True)
+        toml = '[tiers]\nstrong = "big"\nworker = "small"\n\n[usage]\n[usage.prices]\n'
+        (root / "project.toml").write_text(toml)
+        rows = [
+            {"kind": "usage", "harness": "claude", "session": "s1", "role": "main", "agent_type": "",
+             "model": "big-1", "calls": 2, "input": 10, "output": 30, "cache_read": 100,
+             "cache_write": 5, "reasoning": 0, "ts": "2026-10-01T10:00:00Z", "src": "s1", "upto": 10},
+            {"kind": "usage", "harness": "claude", "session": "s1", "role": "subagent",
+             "agent_type": "worker", "model": "small-2", "calls": 1, "input": 1, "output": 10,
+             "cache_read": 0, "cache_write": 0, "reasoning": 0, "ts": "2026-10-09T10:00:00Z",
+             "src": "agent-a", "upto": 10},
+            {"kind": "limits", "harness": "codex", "session": "t", "ts": "2026-10-09T11:00:00Z",
+             "plan": "plus", "primary_used_pct": 40.0, "primary_window_min": 300},
+        ]
+        text = "".join(json.dumps(r) + "\n" for r in rows)
+        (root / "logs" / "usage.jsonl").write_text(text + json.dumps(rows[0]) + "\n")  # a merge dup
+
+        def run(*args: str) -> str:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                assert main(["--root", str(root), *args]) == 0, args
+            return buf.getvalue()
+
+        j = json.loads(run("--json"))
+        assert j["total"]["output"] == 40 and j["total"]["calls"] == 3, j["total"]  # dup ignored
+        assert j["share"]["main_pct"] == 75.0, j["share"]
+        assert set(j["groups"]["role"]) == {"main [strong]", "subagent:worker [worker]"}, j["groups"]
+        assert j["limits"]["primary_used_pct"] == 40.0 and j["cost"] is None
+        assert "tokens only" in run() and "could not be read" not in run()
+        assert json.loads(run("--json"))["unreadable"] is None
+
+        # unreadable transcripts: counted once each (by id) from logs/failures.jsonl
+        fails = [{"signature": "usage-format-unknown", "id": "a1", "ts": "2026-10-03T08:00:00"},
+                 {"signature": "usage-format-unknown", "id": "a1", "ts": "2026-10-03T08:00:00"},
+                 {"signature": "usage-format-unknown", "id": "b2", "ts": "2026-10-07T08:00:00"},
+                 {"signature": "something-else", "id": "c3", "ts": "2026-10-01T08:00:00"}]
+        (root / "logs" / "failures.jsonl").write_text("".join(json.dumps(r) + "\n" for r in fails))
+        out = run()
+        assert "2 session record(s) could not be read since 2026-10-03" in out, out
+        assert out.index("could not be read") < out.index("total"), out
+        assert json.loads(run("--json", "--since", "2026-10-05"))["unreadable"] == {
+            "count": 1, "since": "2026-10-07"}
+        (root / "logs" / "failures.jsonl").unlink()
+        j = json.loads(run("--json", "--since", "2026-10-05", "--by", "week"))
+        assert j["total"]["output"] == 10 and list(j["groups"]["week"]) == ["2026-W41"], j
+        assert "2026-10-01" in run("--by", "day")
+        assert j["context"]["main_peak"] is None  # rows without peak_context: unknown
+
+        # peak context: the largest main-thread prompt, against the configured limit
+        (root / ".codex").mkdir()
+        (root / ".codex" / "config.toml").write_text("model_auto_compact_token_limit = 300\n")
+        with open(root / "logs" / "usage.jsonl", "a") as f:
+            f.write(json.dumps({**rows[0], "ts": "2026-10-02T10:00:00Z", "src": "s2",
+                                "peak_context": 280}) + "\n")
+            f.write(json.dumps({**rows[1], "src": "agent-b", "peak_context": 999}) + "\n")
+        j = json.loads(run("--json"))
+        assert j["context"] == {"main_peak": 280, "compact_limit": 300,
+                                "main_days_near_limit": 1}, j["context"]
+        assert "largest main-thread context: 280 tokens (auto-compaction at 300" in run()
+        (root / ".codex" / "config.toml").unlink()
+        (root / ".codex").rmdir()
+        with open(root / "logs" / "usage.jsonl", "w") as f:
+            f.write(text)
+
+        (root / "project.toml").write_text(
+            toml + '[usage.prices.big]\ninput = 2.0\noutput = 10.0\ncache_read = 1.0\ncache_write = 3.0\n')
+        j = json.loads(run("--json"))
+        want = (10 * 2 + 30 * 10 + 100 * 1 + 5 * 3) / 1e6
+        assert abs(j["cost"]["usd"] - round(want, 4)) < 1e-9, j["cost"]
+        assert j["cost"]["unpriced_models"] == ["small-2"], j["cost"]
+        assert "no rate for: small-2" in run()
+
+        # backfill: a transcript is imported once, also when its rows came from a copy
+        store = Path(d) / "store"
+        (store / "a").mkdir(parents=True)
+        line = json.dumps({"type": "assistant", "sessionId": "s9", "timestamp": "2026-10-09T09:00:00Z",
+                           "message": {"id": "m9", "model": "big-1", "usage": {
+                               "input_tokens": 1, "output_tokens": 7}}}) + "\n"
+        (store / "a" / "s9.jsonl").write_text(line)
+        run("--backfill", "--transcripts", str(store / "a"))
+        assert json.loads(run("--json"))["total"]["output"] == 47
+        shutil.copytree(store / "a", store / "b")  # the same session, copied elsewhere
+        (root / "logs" / "state" / "usage-offsets.json").unlink()
+        out = run("--backfill", "--transcripts", str(store))
+        assert "added 0 row(s)" in out, out
+        assert json.loads(run("--json"))["total"]["output"] == 47
+        with open(store / "b" / "s9.jsonl", "a") as f:  # the session went on
+            f.write(line.replace('"m9"', '"m10"'))
+        run("--backfill", "--transcripts", str(store / "b"))
+        assert json.loads(run("--json"))["total"]["output"] == 54
+    print("bin/usage-report selftest: ok")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,493 @@
+#!/usr/bin/env python3
+"""Read and write the reflection loop's records without losing or repeating a row.
+
+selftest: yes
+
+The loop keeps four kinds of record (formats: docs/discipline/reflection-loop.md):
+  logs/friction.jsonl   friction an agent or the owner noticed
+  logs/failures.jsonl   research commands that failed (written by a hook)
+  logs/feedback.jsonl   owner corrections (of the workflow, or a kind of mathematical slip),
+                        praise, gate bypasses
+  notes/workflow-journal.md   prose notes and the record of each reflection pass
+and one queue: logs/proposals.jsonl, the changes that wait for the owner's decision.
+
+Usage:
+  bin/journal --show-new [LOG]       print what is new since the last review, and remember
+                                     exactly which rows were shown
+  bin/journal --mark-reviewed [LOG]  mark the rows shown by the last --show-new as reviewed
+  bin/journal --summary [LOG]        count the new rows by kind / signature / hook
+  bin/journal --add LOG TEXT [--kind K] [--source S] [--label L] [--now]
+                                     append one row (LOG = friction | feedback | journal)
+  bin/journal --propose TEXT [--source S]
+                                     queue a change that needs the owner's yes (S = reflect |
+                                     retro | program-review | agent); prints its id, P<hex>
+  bin/journal --pending              list the queued proposals the owner has not decided
+  bin/journal --shown [ID ...]       record that these (default: all pending) were put to
+                                     the owner, numbered, in a reply
+  bin/journal --decide ID yes|no [--reason R]
+                                     record the owner's decision; also writes a journal line
+  bin/journal --selftest             run the built-in tests
+
+LOG is friction, failures, feedback, nudges, journal, or any logs/<name>.jsonl. With no
+LOG, --show-new / --mark-reviewed / --summary cover friction, failures, feedback and the
+journal together; --mark-reviewed then also inserts a `<!-- reviewed YYYY-MM-DD -->` marker
+into the journal where the shown entries ended.
+
+Guarantees:
+  * never buried: --mark-reviewed marks only rows that the last --show-new printed, so a
+    row logged during a reflection pass stays new for the next one;
+  * never double-counted: a row is identified by its content, so a row duplicated by a
+    git merge, or already reviewed, is not shown again.
+Review state is per clone, in logs/state/ (not committed).
+
+  --root DIR   act on the project at DIR instead of the one this script lives in
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+DEFAULT_LOGS = ("friction", "failures", "feedback")
+JOURNAL = "journal"
+FEEDBACK_KINDS = ("correction", "math", "bypass", "praise")
+PROPOSAL_SOURCES = ("reflect", "retro", "program-review", "agent")
+FRICTION_SOURCES = ("agent", "owner", "hook")
+LABEL_FIELDS = ("kind", "signature", "hook")
+# A review boundary in the journal; the format header ends with "<!-- entries start -->".
+MARKER = re.compile(r"^<!-- (reviewed \d{4}-\d{2}-\d{2}|entries start)")
+# Lines a reflection pass writes about itself: never shown as new input to the next pass.
+PASS_RECORD = re.compile(r"^- \[[^\]]*\] REFLECT\b")
+
+
+def row_id(line: str) -> str:
+    """Content identity of a log row. hooks/reflect-on-failure.py uses the same rule."""
+    return hashlib.sha256(line.strip().encode("utf-8")).hexdigest()[:16]
+
+
+class Journal:
+    def __init__(self, root: Path):
+        self.root = root
+        self.logs = root / "logs"
+        self.state = root / "logs" / "state"
+        self.journal = root / "notes" / "workflow-journal.md"
+
+    # -- jsonl logs ---------------------------------------------------------
+    def _rows(self, name: str) -> list[tuple[str, str]]:
+        """(id, line) for each distinct non-empty line of logs/<name>.jsonl, in file order."""
+        p = self.logs / f"{name}.jsonl"
+        if not p.exists():
+            return []
+        out, seen = [], set()
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            rid = row_id(line)
+            if rid in seen:
+                continue
+            seen.add(rid)
+            out.append((rid, line))
+        return out
+
+    def _ids(self, name: str, suffix: str) -> set[str] | None:
+        p = self.state / f"journal-{name}.{suffix}"
+        if not p.exists():
+            return None
+        return set(p.read_text(encoding="utf-8").split())
+
+    def _write_ids(self, name: str, suffix: str, ids: set[str], append: bool = False) -> None:
+        self.state.mkdir(parents=True, exist_ok=True)
+        p = self.state / f"journal-{name}.{suffix}"
+        with open(p, "a" if append else "w", encoding="utf-8") as f:
+            for i in sorted(ids):
+                f.write(i + "\n")
+
+    def new_rows(self, name: str) -> list[tuple[str, str]]:
+        reviewed = self._ids(name, "reviewed") or set()
+        return [(i, l) for i, l in self._rows(name) if i not in reviewed]
+
+    def show_log(self, name: str, record: bool = True) -> list[str]:
+        rows = self.new_rows(name)
+        if record:
+            self._write_ids(name, "pending", {i for i, _ in rows})
+        lines = [f"[{name}: {len(rows)} new]"]
+        lines += ["  " + fmt_row(l) for _, l in rows]
+        return lines
+
+    def mark_log(self, name: str) -> str:
+        pending = self._ids(name, "pending")
+        if pending is None:
+            return f"[{name}: nothing to mark; run --show-new {name} first]"
+        self._write_ids(name, "reviewed", pending, append=True)
+        (self.state / f"journal-{name}.pending").unlink()
+        return f"[{name}: {len(pending)} row(s) marked reviewed]"
+
+    # -- the prose journal ----------------------------------------------------
+    def _journal_lines(self) -> list[str]:
+        if not self.journal.exists():
+            return []
+        return self.journal.read_text(encoding="utf-8").splitlines()
+
+    @staticmethod
+    def _prefix_hash(lines: list[str]) -> str:
+        return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+
+    def journal_new(self) -> tuple[int, list[str]]:
+        lines = self._journal_lines()
+        start = 0
+        for i, line in enumerate(lines):
+            if MARKER.match(line):
+                start = i + 1
+        new = [l for l in lines[start:] if l.strip() and not PASS_RECORD.match(l)]
+        return len(lines), new
+
+    def show_journal(self, record: bool = True) -> list[str]:
+        n, new = self.journal_new()
+        if record:
+            self.state.mkdir(parents=True, exist_ok=True)
+            frontier = {"lines": n, "hash": self._prefix_hash(self._journal_lines()[:n])}
+            (self.state / "journal-journal.pending").write_text(json.dumps(frontier) + "\n")
+        return [f"[journal: {len(new)} new line(s) since the last reviewed marker]"] + \
+            ["  " + l for l in new]
+
+    def mark_journal(self, today: str) -> str:
+        pf = self.state / "journal-journal.pending"
+        if not pf.exists():
+            return "[journal: nothing to mark; run --show-new journal first]"
+        frontier = json.loads(pf.read_text())
+        lines = self._journal_lines()
+        n = frontier["lines"]
+        if len(lines) < n or self._prefix_hash(lines[:n]) != frontier["hash"]:
+            raise SystemExit("journal: notes/workflow-journal.md changed above the point shown by "
+                             "--show-new (an edit, not an append). Run --show-new again, then mark.")
+        lines.insert(n, f"<!-- reviewed {today} -->")
+        self.journal.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        pf.unlink()
+        return f"[journal: reviewed marker inserted after line {n}]"
+
+    # -- writing ---------------------------------------------------------------
+    def add(self, name: str, text: str, kind: str | None, source: str | None, now: bool,
+            label: str | None = None) -> str:
+        text = " ".join(text.split())
+        if not text:
+            raise SystemExit("--add needs a non-empty TEXT")
+        ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+        if name == JOURNAL:
+            self.journal.parent.mkdir(parents=True, exist_ok=True)
+            k = (kind or "NOTE").upper()
+            with open(self.journal, "a", encoding="utf-8") as f:
+                f.write(f"- [{ts[:10]}] {k}: {text}\n")
+            return f"[journal: appended {k} line]"
+        if name == "feedback":
+            if kind not in FEEDBACK_KINDS:
+                raise SystemExit(f"feedback needs --kind one of {FEEDBACK_KINDS}")
+            rec = {"ts": ts, "kind": kind, "text": text}
+            if label:
+                rec["label"] = label  # e.g. preemptive | rationale | reactive | self-observed
+        elif name == "friction":
+            src = source or "agent"
+            if src not in FRICTION_SOURCES:
+                raise SystemExit(f"friction --source must be one of {FRICTION_SOURCES}")
+            rec = {"ts": ts, "kind": kind or "general", "text": text, "source": src}
+            if now:
+                rec["priority"] = "now"
+        else:
+            raise SystemExit("--add takes friction, feedback or journal (failures are written by "
+                             "a hook, nudges by hooks/_payload.py)")
+        # A short random tag keeps two identical rows written in the same second distinct
+        # (review state identifies rows by content).
+        rec["id"] = os.urandom(4).hex()
+        self.logs.mkdir(parents=True, exist_ok=True)
+        with open(self.logs / f"{name}.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, sort_keys=True) + "\n")
+        return f"[{name}: logged{' (priority: now)' if now else ''}] {text[:72]}"
+
+
+class Proposals:
+    """The queue of changes waiting for the owner: logs/proposals.jsonl (committed), one
+    `proposal` row per change and one `decision` row per answer. Which pending proposals
+    were already put to the owner is per clone, in logs/state/proposals.shown."""
+
+    def __init__(self, j: Journal):
+        self.j = j
+        self.log = j.logs / "proposals.jsonl"
+        self.shown_file = j.state / "proposals.shown"
+
+    def rows(self) -> list[dict]:
+        out = []
+        for _, line in self.j._rows("proposals"):
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict):
+                out.append(rec)
+        return out
+
+    def pending(self) -> list[dict]:
+        rows = self.rows()
+        decided = {r.get("of") for r in rows if r.get("kind") == "decision"}
+        return [r for r in rows if r.get("kind") == "proposal" and r.get("id") not in decided]
+
+    def shown(self) -> set[str]:
+        return set(self.shown_file.read_text().split()) if self.shown_file.exists() else set()
+
+    def _append(self, rec: dict) -> None:
+        self.j.logs.mkdir(parents=True, exist_ok=True)
+        with open(self.log, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, sort_keys=True) + "\n")
+
+    def propose(self, text: str, source: str | None) -> str:
+        text = " ".join(text.split())
+        if not text:
+            raise SystemExit("--propose needs a non-empty TEXT")
+        src = source or "agent"
+        if src not in PROPOSAL_SOURCES:
+            raise SystemExit(f"--propose --source must be one of {PROPOSAL_SOURCES}")
+        known = {r.get("id") for r in self.rows()}
+        pid = "P" + os.urandom(2).hex()
+        while pid in known:
+            pid = "P" + os.urandom(2).hex()
+        ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+        self._append({"ts": ts, "kind": "proposal", "id": pid, "source": src, "text": text})
+        kind = "RETRO" if src == "retro" else "REFLECT"
+        self.j.add(JOURNAL, f"proposed {pid}: {text}", kind, None, False)
+        return f"[proposals: queued {pid}] put it to the owner, numbered, in your reply"
+
+    def show_pending(self) -> list[str]:
+        pend, shown = self.pending(), self.shown()
+        lines = [f"[proposals: {len(pend)} awaiting the owner's decision]"]
+        for r in pend:
+            mark = "" if r.get("id") in shown else "  (not yet put to the owner)"
+            lines.append(f"  {r.get('id')}  {str(r.get('ts', '?'))[:10]}  {r.get('source', '?')}: "
+                         f"{r.get('text', '')}{mark}")
+        return lines
+
+    def mark_shown(self, ids: list[str]) -> str:
+        pend = {r.get("id") for r in self.pending()}
+        ids = ids or sorted(pend)
+        unknown = [i for i in ids if i not in pend]
+        if unknown:
+            raise SystemExit(f"--shown: not a pending proposal: {', '.join(unknown)}")
+        self.j.state.mkdir(parents=True, exist_ok=True)
+        with open(self.shown_file, "a", encoding="utf-8") as f:
+            for i in ids:
+                f.write(i + "\n")
+        return f"[proposals: {len(ids)} marked as put to the owner]"
+
+    def decide(self, pid: str, decision: str, reason: str | None) -> str:
+        if decision not in ("yes", "no"):
+            raise SystemExit("--decide takes ID and yes or no")
+        match = [r for r in self.pending() if r.get("id") == pid]
+        if not match:
+            raise SystemExit(f"--decide: {pid} is not a pending proposal (see --pending)")
+        rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "kind": "decision", "of": pid,
+               "decision": decision}
+        if reason:
+            rec["reason"] = " ".join(reason.split())
+        self._append(rec)
+        verb = "approved" if decision == "yes" else "declined"
+        why = f" — {rec['reason']}" if reason else ""
+        self.j.add(JOURNAL, f"{verb} {pid}: {match[0].get('text', '')}{why}", "REFLECT", None, False)
+        then = "apply, test and commit it now" if decision == "yes" else "do not propose it again unchanged"
+        return f"[proposals: {pid} {verb}] {then}"
+
+
+def fmt_row(line: str) -> str:
+    try:
+        rec = json.loads(line)
+    except ValueError:
+        return "(unparsed) " + line[:300]
+    if not isinstance(rec, dict):
+        return line[:300]
+    ts = rec.pop("ts", "?")
+    rec.pop("id", None)
+    label = next((str(rec.pop(k)) for k in LABEL_FIELDS if k in rec), "-")
+    pri = " [now]" if rec.pop("priority", None) == "now" else ""
+    rest = "; ".join(f"{k}={' '.join(str(v).split())}" for k, v in sorted(rec.items()))
+    out = f"{ts}  {label}{pri}: {rest}"
+    return out if len(out) <= 400 else out[:397] + "..."
+
+
+def summary(j: Journal, name: str) -> list[str]:
+    if name == JOURNAL:
+        _, new = j.journal_new()
+        return [f"[journal: {len(new)} new line(s)]"]
+    counts: dict[str, int] = {}
+    for _, line in j.new_rows(name):
+        try:
+            rec = json.loads(line)
+            label = next((str(rec[k]) for k in LABEL_FIELDS if k in rec), "-")
+        except (ValueError, TypeError, AttributeError):
+            label = "(unparsed)"
+        counts[label] = counts.get(label, 0) + 1
+    out = [f"[{name}: {sum(counts.values())} new]"]
+    out += [f"  {n:4}  {k}" for k, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return out
+
+
+def targets(log: str | None) -> list[str]:
+    return list(DEFAULT_LOGS) + [JOURNAL] if log is None else [log]
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="bin/journal", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--show-new", nargs="?", const="", metavar="LOG")
+    g.add_argument("--mark-reviewed", nargs="?", const="", metavar="LOG")
+    g.add_argument("--summary", nargs="?", const="", metavar="LOG")
+    g.add_argument("--add", nargs=2, metavar=("LOG", "TEXT"))
+    g.add_argument("--propose", metavar="TEXT")
+    g.add_argument("--pending", action="store_true")
+    g.add_argument("--shown", nargs="*", metavar="ID")
+    g.add_argument("--decide", nargs=2, metavar=("ID", "yes|no"))
+    g.add_argument("--selftest", action="store_true")
+    ap.add_argument("--kind")
+    ap.add_argument("--source", help="friction: who noticed it (agent|owner|hook)")
+    ap.add_argument("--label", help="feedback: optional finer label, e.g. preemptive or rationale")
+    ap.add_argument("--now", action="store_true", help="friction: act on this soon")
+    ap.add_argument("--reason", help="--decide: the owner's reason, in their words")
+    ap.add_argument("--root", default=str(Path(__file__).resolve().parent.parent))
+    a = ap.parse_args(argv)
+    if a.selftest:
+        return selftest()
+    j = Journal(Path(a.root))
+    if a.add:
+        print(j.add(a.add[0], a.add[1], a.kind, a.source, a.now, a.label))
+        return 0
+    pr = Proposals(j)
+    if a.propose is not None:
+        print(pr.propose(a.propose, a.source))
+        return 0
+    if a.pending:
+        print("\n".join(pr.show_pending()))
+        return 0
+    if a.shown is not None:
+        print(pr.mark_shown(a.shown))
+        return 0
+    if a.decide:
+        print(pr.decide(a.decide[0], a.decide[1], a.reason))
+        return 0
+    if a.show_new is not None:
+        for t in targets(a.show_new or None):
+            print("\n".join(j.show_journal() if t == JOURNAL else j.show_log(t)))
+        return 0
+    if a.summary is not None:
+        for t in targets(a.summary or None):
+            print("\n".join(summary(j, t)))
+        return 0
+    log = a.mark_reviewed or None
+    today = time.strftime("%Y-%m-%d")
+    for t in targets(log):
+        print(j.mark_journal(today) if t == JOURNAL else j.mark_log(t))
+    return 0
+
+
+# --- selftest -----------------------------------------------------------------
+
+def selftest() -> int:
+    me = str(Path(__file__).resolve())
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+
+        def run(*args: str) -> str:
+            r = subprocess.run([sys.executable, me, "--root", d, *args], capture_output=True,
+                               text=True, timeout=60)
+            if r.returncode != 0:
+                raise AssertionError(f"{args} exited {r.returncode}: {r.stderr}")
+            return r.stdout
+
+        def expect_fail(*args: str) -> None:
+            r = subprocess.run([sys.executable, me, "--root", d, *args], capture_output=True,
+                               text=True, timeout=60)
+            assert r.returncode != 0, f"{args} should have failed"
+
+        (root / "notes").mkdir()
+        (root / "notes" / "workflow-journal.md").write_text(
+            "# Workflow journal\n\nFormat: `- [YYYY-MM-DD] KIND: text`.\n\n<!-- entries start -->\n")
+        run("--add", "friction", "first friction", "--kind", "tooling")
+        run("--add", "feedback", "you skipped the check", "--kind", "correction",
+            "--label", "reactive")
+        expect_fail("--add", "feedback", "no kind")
+        expect_fail("--add", "failures", "hooks write these")
+        run("--add", "journal", "a longer note", "--kind", "note")
+        out = run("--show-new")
+        assert "[friction: 1 new]" in out and "first friction" in out, out
+        assert "[feedback: 1 new]" in out and "[failures: 0 new]" in out, out
+        assert "NOTE: a longer note" in out, out
+        assert "Format:" not in out, out  # the header is not an entry
+        # Rows logged DURING the pass must survive the mark (never buried).
+        run("--add", "friction", "logged during the pass")
+        run("--add", "journal", "note during the pass")
+        run("--add", "journal", "[auto-applied] fixed a thing", "--kind", "reflect")
+        run("--mark-reviewed")
+        out = run("--show-new")
+        assert "[friction: 1 new]" in out and "logged during the pass" in out, out
+        assert "first friction" not in out, out
+        assert "[feedback: 0 new]" in out, out
+        assert "note during the pass" in out and "a longer note" not in out, out
+        assert "auto-applied" not in out, out  # a pass's own record is not new input
+        text = (root / "notes" / "workflow-journal.md").read_text()
+        assert text.count("<!-- reviewed ") == 1, text
+        assert text.index("a longer note") < text.index("<!-- reviewed") \
+            < text.index("note during the pass"), text
+        # A row duplicated by a merge is shown once (never double-counted).
+        f = root / "logs" / "friction.jsonl"
+        f.write_text(f.read_text() + f.read_text().splitlines()[-1] + "\n")
+        out = run("--show-new", "friction")
+        assert out.count("logged during the pass") == 1, out
+        # --mark-reviewed without a preceding --show-new marks nothing.
+        run("--mark-reviewed", "friction")
+        out = run("--mark-reviewed", "friction")
+        assert "nothing to mark" in out, out
+        assert "[friction: 0 new]" in run("--show-new", "friction")
+        # An edit above the frontier is refused rather than guessed at.
+        run("--show-new", "journal")
+        j = root / "notes" / "workflow-journal.md"
+        j.write_text(j.read_text().replace("Workflow journal", "Workflow journal (edited)"))
+        expect_fail("--mark-reviewed", "journal")
+        # Summary counts by label; corrupt lines do not crash anything.
+        with open(root / "logs" / "failures.jsonl", "a") as fh:
+            fh.write('{"ts":"t","signature":"oom","command":"x","excerpt":"y"}\n')
+            fh.write('{"ts":"u","signature":"oom","command":"x","excerpt":"z"}\n')
+            fh.write("not json\n")
+        out = run("--summary", "failures")
+        assert "2  oom" in out and "(unparsed)" in out, out
+        # Proposals: queued, listed until decided, shown-state per clone, decisions journaled.
+        out = run("--propose", "require public-only references in final papers", "--source", "retro")
+        p1 = out.split("queued ")[1].split("]")[0]
+        out = run("--propose", "lower the compaction limit", "--source", "reflect")
+        p2 = out.split("queued ")[1].split("]")[0]
+        expect_fail("--propose", "x", "--source", "nobody")
+        out = run("--pending")
+        assert "2 awaiting" in out and out.count("not yet put to the owner") == 2, out
+        run("--shown", p1)
+        out = run("--pending")
+        assert out.count("not yet put to the owner") == 1 and f"{p2}  " in out, out
+        expect_fail("--shown", "P0000")
+        run("--decide", p1, "yes", "--reason", "papers must stand alone")
+        expect_fail("--decide", p1, "no")  # already decided
+        expect_fail("--decide", p2, "maybe")
+        out = run("--pending")
+        assert "1 awaiting" in out and p1 not in out, out
+        text = (root / "notes" / "workflow-journal.md").read_text()
+        assert f"RETRO: proposed {p1}: require public-only" in text, text
+        assert f"REFLECT: approved {p1}: require public-only references in final papers — papers must stand alone" in text, text
+        out = run("--show-new", "journal")
+        assert f"proposed {p2}" not in out, out  # a pass's own record is not new input
+        assert f"proposed {p1}" in out, out  # a retro's counterfactual is, as before
+        run("--help")
+    print("bin/journal selftest: ok")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

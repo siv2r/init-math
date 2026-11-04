@@ -1,0 +1,8 @@
+[cache]
+# Columns that identify one computed object. bin/cache de-duplicates on them.
+# Replace with your own, e.g. ["graph6"] or ["dimension", "label"].
+key_columns = ["object"]
+# Optional command that reads tab-separated key rows on stdin and prints the canonical form
+# of each row, one per line, in the same order (e.g. reduce a polynomial, relabel a graph).
+# Empty = keys are compared as written, after trimming spaces.
+canonicalizer = ""

@@ -1,0 +1,1 @@
+{"hook_event_name":"PreToolUse","tool_name":"apply_patch","cwd":"/tmp/proj","tool_input":{"command":"*** Begin Patch\n*** Update File: wiki/conjectures/C001-x.md\n@@\n-a\n+b\n*** Add File: notes/new.md\n+hi\n*** Update File: old/name.md\n*** Move to: new/name.md\n*** End Patch\n"}}

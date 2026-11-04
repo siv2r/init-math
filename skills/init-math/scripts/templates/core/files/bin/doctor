@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""Check that this agent session actually loaded the project: its folder, hooks, settings and
+agents. bin/selftest checks the files; this checks the live session, so run it THROUGH THE
+AGENT (the agent runs it in a session's first turn of work, and the getting-started skill
+starts with it), not in a terminal of your own.
+
+selftest: yes
+
+    bin/doctor             print one line per check; exit 1 on any FAIL
+    bin/doctor --selftest  run the built-in tests
+
+The checks:
+  * the session started in this folder (the harness loads a project's skills and settings
+    only from there): the working directory is the project root;
+  * hooks ran for this very command: the harness runs the project's hooks before a shell
+    command, and each run stamps logs/state/harness-hooks-seen; a stamp older than a
+    minute or two means no hook ran for this command;
+  * Codex only: this folder is trusted in Codex's own config (untrusted projects load
+    none of .codex/: no settings, no hooks), and the main thread runs on the model
+    .codex/config.toml names (Codex reports it to hooks);
+  * subagents run as this project's agents: once logs/usage.jsonl records subagents, at
+    least one ran as an agent defined in .codex/agents/ or .claude/agents/;
+  * nothing worth keeping lives only in a git-ignored scratch/ folder (a WARN: a manuscript,
+    or a file untouched for a week, is in no commit).
+A check that cannot be decided yet (no subagents so far, a harness that does not report
+its model) says so and does not fail.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+import tomllib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+ALIVE = "harness-hooks-seen"
+FRESH_S = 180
+
+Result = tuple[str, str, str]  # (PASS | WARN | FAIL | INFO, check, detail)
+
+
+def _toml(p: Path) -> dict:
+    try:
+        with open(p, "rb") as f:
+            return tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def check_folder(root: Path, cwd: Path) -> Result:
+    if cwd.resolve() == root.resolve():
+        return ("PASS", "session started in this folder", "")
+    return ("FAIL", "session started in this folder",
+            f"the working directory is {cwd}, not {root}. The harness loads a project's skills, "
+            f"hooks and settings from the folder it starts in: start it again there (cd {root})")
+
+
+def check_hooks(root: Path, now: float) -> tuple[Result, dict]:
+    f = root / "logs" / "state" / ALIVE
+    try:
+        rec = json.loads(f.read_text())
+    except (OSError, ValueError):
+        return (("FAIL", "hooks ran for this command",
+                 "no hook of this project has ever run in this copy: the session was started "
+                 "outside this folder, or (Codex) its hooks are not trusted: type /hooks and "
+                 "trust them. If you ran bin/doctor yourself in a terminal, this check does not "
+                 "apply: ask the agent to run it"), {})
+    age = now - float(rec.get("epoch") or 0)
+    if age > FRESH_S:
+        return (("FAIL", "hooks ran for this command",
+                 f"the last hook ran {int(age // 60)} min ago, none for this command: this "
+                 "session is not running the project's hooks (started elsewhere, or untrusted "
+                 "hooks; on Codex type /hooks). If you ran bin/doctor yourself in a terminal, "
+                 "this check does not apply"), rec)
+    return (("PASS", "hooks ran for this command", f"{rec.get('harness', '?')} hooks are live"), rec)
+
+
+def check_codex_trust(root: Path, codex_home: Path) -> Result:
+    cfg = codex_home / "config.toml"
+    if not cfg.exists():
+        return ("WARN", "Codex trusts this folder", f"could not read {cfg}")
+    projects = _toml(cfg).get("projects") or {}
+    me = root.resolve()
+    for key, val in projects.items():
+        if not isinstance(val, dict) or val.get("trust_level") != "trusted":
+            continue
+        try:
+            p = Path(key).expanduser().resolve()
+        except (OSError, ValueError):
+            continue
+        if me == p or p in me.parents:
+            return ("PASS", "Codex trusts this folder", "")
+    return ("FAIL", "Codex trusts this folder",
+            f"{root} is not trusted in {cfg}, so Codex skips the project's .codex/ settings and "
+            "hooks. Start codex in this folder and accept the trust prompt")
+
+
+def check_model(root: Path, rec: dict) -> Result:
+    want = str(_toml(root / ".codex" / "config.toml").get("model") or "")
+    got = str(rec.get("main_model") or "")
+    if not want or not got:
+        return ("INFO", "main thread on the configured model",
+                "not known: no main-thread hook has reported a model")
+    if got == want:
+        return ("PASS", "main thread on the configured model", got)
+    return ("FAIL", "main thread on the configured model",
+            f"running on {got}, but .codex/config.toml says {want}: the project's settings are "
+            "not loaded (an untrusted folder), or the model was switched for this session")
+
+
+def agent_names(root: Path) -> set[str]:
+    names = {p.stem for p in (root / ".codex" / "agents").glob("*.toml")}
+    names |= {p.stem for p in (root / ".claude" / "agents").glob("*.md")}
+    return names
+
+
+def check_agents(root: Path) -> Result:
+    p = root / "logs" / "usage.jsonl"
+    types: list[str] = []
+    if p.exists():
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(r, dict) and r.get("role") == "subagent":
+                types.append(str(r.get("agent_type") or ""))
+    if not types:
+        return ("INFO", "subagents run as this project's agents", "no subagents recorded yet")
+    names = agent_names(root)
+    if any(t in names for t in types):
+        return ("PASS", "subagents run as this project's agents", "")
+    return ("FAIL", "subagents run as this project's agents",
+            f"{len(types)} subagent record(s), none as one of the project's agents "
+            f"({', '.join(sorted(names)) or 'none defined'}): the agent files are not loaded, so "
+            "reviewers and workers run as generic agents on whatever model the coordinator picks")
+
+
+def scratch_at_risk(root: Path, now: float, stale_days: int = 7) -> list[str]:
+    """Files in git-ignored scratch/ folders that look worth keeping: a manuscript (.tex,
+    .bib) or anything untouched for a week. git ignores scratch/, so they are in no commit
+    (a trial run kept every paper draft there)."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--ignored",
+                            "--exclude-standard", "-z"], capture_output=True, text=True,
+                           timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    out = []
+    for rel in sorted(p for p in r.stdout.split("\0") if p and "scratch" in Path(p).parts):
+        f = root / rel
+        try:
+            old = now - f.stat().st_mtime > stale_days * 86400
+        except OSError:
+            continue
+        if f.suffix in (".tex", ".bib") or old:
+            out.append(rel)
+    return out
+
+
+def check_scratch(root: Path, now: float) -> Result:
+    risky = scratch_at_risk(root, now)
+    if not risky:
+        return ("PASS", "nothing worth keeping only in scratch/", "")
+    shown = ", ".join(risky[:5]) + (f" and {len(risky) - 5} more" if len(risky) > 5 else "")
+    return ("WARN", "nothing worth keeping only in scratch/",
+            f"{len(risky)} file(s) in git-ignored scratch/ folders look worth keeping and are in "
+            f"no commit: {shown}. Move a manuscript to writeups/ or its work folder, a check "
+            "to the work folder's checks/; delete what is truly throwaway")
+
+
+def run_checks(root: Path, cwd: Path, now: float, codex_home: Path) -> list[Result]:
+    harness = str(_toml(root / "project.toml").get("project", {}).get("harness", ""))
+    out = [check_folder(root, cwd)]
+    hooks, rec = check_hooks(root, now)
+    out.append(hooks)
+    if harness == "codex":
+        out.append(check_codex_trust(root, codex_home))
+        out.append(check_model(root, rec))
+    out.append(check_agents(root))
+    out.append(check_scratch(root, now))
+    return out
+
+
+def report(results: list[Result]) -> int:
+    width = max(len(n) for _, n, _ in results)
+    for status, name, detail in results:
+        print(f"{status:4}  {name:<{width}}" + (f"  {detail}" if detail else ""))
+    fails = sum(1 for s, _, _ in results if s == "FAIL")
+    print(f"\n{len(results)} checks, {fails} failed" + (
+        "\nSomething this project relies on is not loaded. Tell the owner what failed and how "
+        "to fix it before doing research work." if fails else ""))
+    return 1 if fails else 0
+
+
+def selftest() -> int:
+    bad = []
+    with tempfile.TemporaryDirectory() as t:
+        root = Path(t) / "proj"
+        home = Path(t) / "codex-home"
+        (root / "logs" / "state").mkdir(parents=True)
+        (root / ".codex" / "agents").mkdir(parents=True)
+        home.mkdir()
+        (root / "project.toml").write_text('[project]\nharness = "codex"\n')
+        (root / ".codex" / "config.toml").write_text('model = "big"\n')
+        (root / ".codex" / "agents" / "claim-auditor.toml").write_text('name = "claim-auditor"\n')
+        now = time.time()
+
+        def statuses(cwd=root, at=now):
+            return {n: s for s, n, _ in run_checks(root, cwd, at, home)}
+
+        s = statuses(cwd=Path(t))  # wrong folder, no hooks ever, no trust record
+        if s["session started in this folder"] != "FAIL" or s["hooks ran for this command"] != "FAIL" \
+                or s["Codex trusts this folder"] != "WARN":
+            bad.append(f"bare project: {s}")
+        (root / "logs" / "state" / ALIVE).write_text(json.dumps(
+            {"harness": "codex", "epoch": now - 5, "main_model": "big"}))
+        (home / "config.toml").write_text(f'[projects."{Path(t).resolve()}"]\ntrust_level = "trusted"\n')
+        s = statuses()
+        if any(v == "FAIL" for v in s.values()) \
+                or s["subagents run as this project's agents"] != "INFO":
+            bad.append(f"healthy project: {s}")
+        if statuses(at=now + 3600)["hooks ran for this command"] != "FAIL":
+            bad.append("a stale hook stamp must fail")
+        (root / "logs" / "state" / ALIVE).write_text(json.dumps(
+            {"harness": "codex", "epoch": now, "main_model": "small"}))
+        if statuses()["main thread on the configured model"] != "FAIL":
+            bad.append("a different main-thread model must fail")
+        (home / "config.toml").write_text('[projects."/somewhere/else"]\ntrust_level = "trusted"\n')
+        if statuses()["Codex trusts this folder"] != "FAIL":
+            bad.append("an untrusted folder must fail")
+        usage = root / "logs" / "usage.jsonl"
+        usage.write_text('{"role": "subagent", "agent_type": ""}\n{"role": "main"}\nnot json\n')
+        if statuses()["subagents run as this project's agents"] != "FAIL":
+            bad.append("generic subagents only must fail")
+        with open(usage, "a") as f:
+            f.write('{"role": "subagent", "agent_type": "claim-auditor"}\n')
+        if statuses()["subagents run as this project's agents"] != "PASS":
+            bad.append("a project agent among the subagents must pass")
+        if statuses()["nothing worth keeping only in scratch/"] != "PASS":
+            bad.append("no scratch files: nothing at risk")
+        import subprocess as sp
+        sp.run(["git", "init", "-q", str(root)], check=True)
+        (root / ".gitignore").write_text("scratch/\n")
+        (root / "work" / "a" / "scratch").mkdir(parents=True)
+        (root / "work" / "a" / "scratch" / "brief.md").write_text("x")
+        if statuses()["nothing worth keeping only in scratch/"] != "PASS":
+            bad.append("a fresh throwaway file in scratch/ is fine")
+        (root / "work" / "a" / "scratch" / "paper.tex").write_text("x")
+        old = root / "work" / "a" / "scratch" / "old.py"
+        old.write_text("x")
+        os.utime(old, (now - 30 * 86400, now - 30 * 86400))
+        s = {n: (st, d) for st, n, d in run_checks(root, root, now, home)}
+        st, d = s["nothing worth keeping only in scratch/"]
+        if st != "WARN" or "paper.tex" not in d or "old.py" not in d or "brief.md" in d:
+            bad.append(f"a manuscript and an old file in scratch/ must warn: {st} {d}")
+        (root / "project.toml").write_text('[project]\nharness = "claude"\n')
+        if "Codex trusts this folder" in statuses():
+            bad.append("the Codex checks must not run on Claude Code")
+    for b in bad:
+        print("SELFTEST FAIL", b)
+    print(f"doctor selftest: {'ok' if not bad else f'{len(bad)} failed'}")
+    return 1 if bad else 0
+
+
+def main(argv: list[str]) -> int:
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return 0
+    if "--selftest" in argv:
+        return selftest()
+    codex_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    return report(run_checks(ROOT, Path.cwd(), time.time(), codex_home))
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

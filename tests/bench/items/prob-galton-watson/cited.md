@@ -1,0 +1,3 @@
+- Convergence of nonnegative martingales (Durrett, Probability: Theory and Examples, 5th ed., Section 4.2): if X_n >= 0 is a supermartingale, then X_n -> X almost surely, and E[X] <= E[X_0].
+- L^p convergence theorem (Durrett, 5th ed., Section 4.4): if (X_n) is a martingale with sup_n E|X_n|^p < infinity for some p > 1, then X_n -> X almost surely and in L^p.
+- Fatou's lemma (Durrett, 5th ed., Section 1.5): if f_n >= 0, then the integral of lim inf f_n is at most lim inf of the integrals of f_n.

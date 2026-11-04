@@ -1,0 +1,31 @@
+id = "scans"
+number = 7
+title = "Mechanical scans"
+group = "B"
+status = "included"
+core = true
+order = 70
+summary = "Zero-model scripts that catch the mechanical defects before a reviewer sees a document: over-strong headlines, undefined codes, broken and one-way links, unindexed artifacts, unbacked difficulty estimates, stale claims, and proof hygiene."
+depends = []
+
+allow_commands = ["bin/backlink-check", "bin/define-check", "bin/hedge-scan", "bin/link-check", "bin/math-hygiene-scan", "bin/orphan-check", "bin/scope-estimate-scan", "bin/stale-status-scan"]  # pre-approved: checks and records only
+
+[[hooks]]
+script = "hooks/define-check-nudge.py"
+event = "PreToolUse"
+actions = ["shell"]
+
+[[hooks]]
+script = "hooks/orphan-check-nudge.py"
+event = "PreToolUse"
+actions = ["shell"]
+
+[[hooks]]
+script = "hooks/backlink-check-nudge.py"
+event = "PreToolUse"
+actions = ["shell"]
+
+[[hooks]]
+script = "hooks/stale-scan-predispatch.py"
+event = "PreToolUse"
+actions = ["spawn"]

@@ -1,0 +1,13 @@
+# The statement is FALSE. The a.s. convergence part is right; E[W] = 1 is not. The proof uses
+# a finite offspring variance sigma^2, which the statement does not assume (finite mean only).
+# Kesten-Stigum theorem (Kesten and Stigum 1966; Athreya and Ney, Branching Processes, Ch. I.10;
+# Lyons-Pemantle-Peres 1995): for 1 < mu < infinity, E[W] = 1 iff E[xi log xi] < infinity, and
+# otherwise W = 0 a.s. Counterexample offspring law: P(xi = k) = c / (k^2 (log k)^2) for k >= 2:
+# mean = c sum 1/(k (log k)^2) < infinity and >= 2 > 1, but E[xi log xi] = c sum 1/(k log k) = infinity,
+# so W = 0 a.s. and E[W] = 0. (The variance is infinite, so the L^2 bound is unavailable.)
+# The step itself (bound on E[M_n^2]) is a correct computation when sigma^2 < infinity.
+kind = "flawed"
+error_class = "hidden hypothesis: finite offspring variance used but not assumed"
+location = "the L^2 step: 'with mean mu and variance sigma^2' and the bound E[M_n^2] <= 1 + sigma^2/(mu(mu - 1))"
+catch = "says the proof assumes the offspring variance sigma^2 is finite, which the statement does not (only the mean is finite), so the L^2 bound and with it E[W] = 1 are unproved; ideally notes the claim is then false: by the Kesten-Stigum theorem E[W] = 1 iff E[xi log xi] < infinity, else W = 0 a.s., e.g. for P(xi = k) proportional to 1/(k^2 (log k)^2), k >= 2"
+audited = "2026-10-28, Claude Fable 5.1: second-moment recursion and the L^2 bound re-derived (correct when sigma^2 finite); Kesten-Stigum counterexample P(xi = k) ~ 1/(k^2 (log k)^2) has finite mean >= 2 and E[xi log xi] = infinity; Durrett references checked"

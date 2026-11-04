@@ -1,0 +1,5 @@
+kind = "flawed"
+error_class = "false general lemma"
+location = "the step claiming F2[q] is saturated in F2[[q]]"
+catch = "names that step as false or unjustified, e.g. (1 + q) times 1 + q + q^2 + ... = 1"
+audited = "2026-10-28, Claude Fable 5.1: saturation claim refuted by (1+q)(1+q+q^2+...) = 1; the rest of the argument and the cited statements re-checked; statement itself true (Kolberg); earlier: 2026-10-27 fidelity and behavior reviews"

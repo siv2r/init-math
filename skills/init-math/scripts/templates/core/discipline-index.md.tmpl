@@ -1,0 +1,14 @@
+# Discipline docs
+
+The reasoning behind the rules in [AGENTS.md](../../AGENTS.md){{#if harness.coordinator_file}} and [{{harness.coordinator_file}}](../../{{harness.coordinator_file}}){{/if}}. Open the one you need
+at the moment its rule applies; each rule there names that moment.
+
+{{#if discipline_docs}}
+| Doc | Topic |
+|---|---|
+{{#each discipline_docs}}
+| [{{file}}]({{file}}) | {{title}} |
+{{/each}}
+{{else}}
+(No discipline docs are installed in this project.)
+{{/if}}

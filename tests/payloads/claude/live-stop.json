@@ -1,0 +1,15 @@
+{
+  "background_tasks": [],
+  "cwd": "/tmp/proj",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "Stop",
+  "last_assistant_message": "All three steps are done:\n\n1. `ls` listed: AGENTS.md, CLAUDE.md, GLOSSARY.md, SEARCH-ALIASES.md, bin, docs, hooks, logs, probe, project.toml.\n2. I created `notes/x.md` containing \"hello\".\n3. The probe-reviewer agent's one-line answer was: `# Partition Congruences \u2014 agent operating guide`",
+  "permission_mode": "acceptEdits",
+  "prompt_id": "00000000-0000-0000-0000-000000000000",
+  "session_crons": [],
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "stop_hook_active": false,
+  "transcript_path": "/home/user/.claude/projects/-tmp-proj/00000000-0000-0000-0000-000000000000.jsonl"
+}

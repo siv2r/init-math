@@ -1,0 +1,30 @@
+id = "reflect"
+number = 17
+title = "Reflection loop"
+group = "E"
+status = "included"
+core = true
+order = 170
+summary = "Friction and failures are logged as they happen; a periodic reflection pass turns recurring pain into small, tested workflow fixes, applying the safe ones and asking about the rest."
+depends = []
+
+allow_commands = ["bin/journal"]  # pre-approved: checks and records only
+
+[[hooks]]
+script = "hooks/reflect-on-failure.py"
+event = "PostToolUse"
+actions = ["shell"]
+
+[[hooks]]
+script = "hooks/reflect-on-failure.py"
+event = "PostToolUseFailure"
+actions = ["shell"]
+harnesses = ["claude"]   # Codex reports failures through PostToolUse's exit code
+
+[[hooks]]
+script = "hooks/proactive-friction-nudge.py"
+event = "Stop"
+
+[[hooks]]
+script = "hooks/proposals-nudge.py"
+event = "Stop"

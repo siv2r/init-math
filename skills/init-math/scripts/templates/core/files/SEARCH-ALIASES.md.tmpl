@@ -1,0 +1,30 @@
+# Search aliases
+
+When you know an idea but not this project's word for it, look here. When a search
+misses because the project uses a different word, add a row.
+
+| If you searched for | The project calls it | Where |
+|---|---|---|
+{{#if modules.conjectures}}
+| hypothesis, belief, claim under test | conjecture | `wiki/conjectures/` |
+| next step, to-do, backlog, what to work on | `@residue` | `bin/residues` lists them |
+{{/if}}
+{{#if modules.known_results}}
+| is this already known, prior art | known results, plus a `lit-search` agent for the literature | `wiki/known-results/` |
+{{/if}}
+{{#if modules.attempts}}
+| dead end, tried before, failed approach, what didn't work | attempt record (a line of attack) | `bin/attempts --obstructions <target>` |
+{{/if}}
+| sanity check, does the tool work, validate the method | known-answer check | `GLOSSARY.md` |
+{{#if modules.tiers}}
+| stuck, need help, blocked, cannot decide | NEED-DIRECTION (a worker's hand-back) | `docs/discipline/tiers.md` |
+| long run, will take a while | long job (over about two minutes; the coordinator starts it) | `docs/discipline/tiers.md` |
+{{/if}}
+{{#if modules.gates}}
+| second opinion, peer check, audit | reviewer, gate | `docs/discipline/gate-chain.md` |
+{{/if}}
+{{#if modules.stopping}}
+| keep going, may I stop, is this a checkpoint | continue signal | `docs/discipline/stopping.md` |
+{{/if}}
+| lessons learned, retrospective notes | workflow journal | `notes/workflow-journal.md` |
+| only the owner can, needs permission | owner levers | `{{#if harness.coordinator_file}}{{harness.coordinator_file}}{{else}}AGENTS.md{{/if}}`, "Ground rules" |

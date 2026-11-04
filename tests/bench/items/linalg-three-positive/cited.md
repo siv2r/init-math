@@ -1,0 +1,1 @@
+- Product of two positive definite matrices (standard; see e.g. Horn and Johnson, Matrix Analysis, 2nd ed., Section 7.6): if P and Q are real symmetric positive definite n x n matrices, then PQ is diagonalizable over R and all its eigenvalues are real and positive. Here a real n x n matrix P is positive definite if it is symmetric and x^T P x > 0 for every nonzero x in R^n.

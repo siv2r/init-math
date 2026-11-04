@@ -1,0 +1,93 @@
+---
+name: launch-preflight
+description: Load BEFORE starting any computation expected to run more than about two minutes, any background job, any sweep over many cases, or anything meant to run while nobody watches. Walks the launch gate and an eleven-point preflight so a long run cannot be orphaned, silently wrong, or unboundedly expensive.
+---
+# Launch preflight
+
+Coordinator only. Workers and single-turn agents run in the foreground and return; they
+never launch a long job.
+
+Every item below is a way a long run has been lost or misread. Go through them in order;
+write the answers into the experiment's notes or the run's README, not only into your head.
+
+## A. The launch gate (all three, or do not launch)
+
+1. **One tracked waiter.**
+{{#if harness.cap.background_callback}}
+   Launch as a background job the harness tracks (its completion notice wakes you), OR
+   start the job some other way and keep exactly one `bin/wait-until-done` waiting on it,
+   never both, never neither. Never a detached `nohup ... &` with nothing waiting: it gives
+   no notice and is lost when the session ends.
+{{else}}
+   This harness does not wake you when a background job ends, so run the job in the
+   foreground and wait for it. If it may not finish in this session, run it as
+   `bin/bg-run --runs runs/ --detach -- <command>` (it runs the job apart from the session,
+   so it survives the session's end, and records the command, its process id, its output
+   and its exit code under `runs/<timestamp>/`), say so in your report, and have the next
+   session check it with `bin/bg-run --status runs/<timestamp>` (finished, still running or
+   died) before assuming anything.
+{{/if}}
+   If you cannot name the waiter, you have not launched.
+2. **Heartbeat and an estimate.** Run under `bin/bg-run` or `bin/heartbeat`, so the run
+   prints progress and flags a stall. State an expected duration, taken from a timed
+   probe (section B, item 10), not a guess.
+3. **A resume plan** for an unattended run: where the output goes, how a later session
+   tells finished from still-running from died, and what it does in each case.
+
+## B. Preflight
+
+1. **Deliverable.** Name exactly what the run must produce, and pick the cheapest tool
+   that produces exactly that. If the request left the size, the method or what to report
+   open, the intake check answers it first (`notes/procedures.md`, then one question to
+   {{owner}}).
+2. **Can the method answer the question at these parameters?** Check what is known
+   about its limits (range, precision, the size at which it stops resolving the
+   difference you care about) before paying for the run.
+3. **Smoke the smallest case first,** under a resource limit, with the exact command you
+   will launch.
+4. **Bound the cost of every item.** Any loop over items whose individual cost is
+   unbounded needs a per-item limit (time or size), so one bad item cannot eat the run.
+{{#if modules.experiments}}
+   `bin/guard-run` applies such limits.
+{{/if}}
+5. **Deterministic per-item work is a script,** not repeated agent calls.
+6. **Make it observable.** Capture raw output to a file before filtering it. Flush output
+   as you go. Do not end the command with a trailing `; echo` or `| tail`: that masks the
+   real exit code. When reading the file later: a header but nothing else after the run
+   ended usually means the job was killed; an empty file while it runs is often just
+   buffering.
+7. **Fresh verified build.** Build, check it succeeded (exit status, the binary's or
+   module's timestamp), run the known-answer case, and only then launch. Never chain
+   `build && launch` and walk away.
+8. **A unique output path per run.** A re-run must never overwrite a run still in
+   progress; stop any earlier run writing to the same place.
+9. **Size the shards.** Split a big run into pieces that each finish in reasonable time,
+   with one waiter per piece rather than one barrier at the end.
+10. **Model the cost from several timed items**: the cheapest, a typical one and the
+    heaviest you can find. Plan for the worst. If the cost is too high, change the method
+    or the tool, not the limit.
+11. **Guard child processes inside the loop** with their own limits. A process sitting at
+    about 0% CPU for a long time is hung, not working.
+{{#if stack.run_cmd}}
+
+The run command is set in `project.toml` under `[stack] run_cmd` (currently `{{stack.run_cmd}}`).
+{{/if}}
+
+## C. After launch
+
+- **An exit code is not the deliverable.** Open the output: does it exist, does it have
+  the expected number of rows, does the known-answer row match?
+- **A usage or rate limit with a reset time is a pause, not the end of the run.**
+  Checkpoint, then resume after the reset.
+- On a stall or a resource-limit trip:
+{{#if modules.experiments}}
+  follow the response in `docs/discipline/experiment-doctrine.md` (section "Guarded runs").
+{{else}}
+  stop; do not raise the limit and retry. Make the run cheaper (smaller case, a cached
+  result, a structural shortcut, a different tool) or propose the larger run to the owner
+  with its estimated cost.
+{{/if}}
+{{#if modules.tiers}}
+- A dispatched worker never launches a long run; it returns the command and you run it
+  (see `docs/discipline/tiers.md`).
+{{/if}}

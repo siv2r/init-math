@@ -1,0 +1,8 @@
+## Safety guard
+
+{{#if view.shared}}
+- A hook refuses recursive deletes (`rm -r`, `find -delete`), a force push or delete of a main branch, and a download piped into a shell. Delete named files; write scratch into a fresh timestamped directory so nothing needs cleaning up.
+- **`sudo` / `doas` and a world-writable `chmod` (777, 666, `o+w`) are the owner's steps.** When refused, do not retry or work around it: give the owner step-by-step instructions for only the steps they must perform (what each changes, its risk, how to undo it), then continue with what does not need them.
+- **Never set `GATE_OK` or pass `--no-verify`**: those bypasses are the owner's. The hook refuses and logs the attempt.
+- Stage exact paths, not `git add -A`; edit docs with the edit tool, not `sed -i`. Details: [docs/discipline/guard.md](docs/discipline/guard.md).
+{{/if}}

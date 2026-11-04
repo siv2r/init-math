@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Point git at this project's hooks (.githooks/), so the commit gate runs.
+
+selftest: yes
+
+Usage:
+  bin/setup-hooks              set core.hooksPath = .githooks in this clone (idempotent)
+  bin/setup-hooks --check      exit 0 if it is set, 1 if not (changes nothing)
+  bin/setup-hooks --root DIR   act on the clone at DIR (default: this script's project)
+  bin/setup-hooks --selftest   run the built-in tests in a temporary git repository
+
+Git settings are per clone and are not committed, so every new clone (and every new git
+worktree that has its own config) must run this once. Until it does, commits in that clone
+skip the commit gate silently. bin/selftest reports it.
+"""
+from __future__ import annotations
+
+import os
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+WANT = ".githooks"
+
+
+def git(root: Path, *args: str) -> tuple[int, str]:
+    try:
+        r = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=30)
+    except OSError as e:
+        return 127, str(e)
+    return r.returncode, (r.stdout + r.stderr).strip()
+
+
+def in_work_tree(root: Path) -> bool:
+    rc, out = git(root, "rev-parse", "--is-inside-work-tree")
+    return rc == 0 and out == "true"
+
+
+def current(root: Path) -> str:
+    rc, out = git(root, "config", "--get", "core.hooksPath")
+    return out if rc == 0 else ""
+
+
+def setup(root: Path) -> int:
+    if not in_work_tree(root):
+        print(f"setup-hooks: {root} is not a git work tree; run `git init` first.",
+              file=sys.stderr)
+        return 1
+    hooks = root / WANT
+    if not hooks.is_dir():
+        print(f"setup-hooks: {hooks} is missing.", file=sys.stderr)
+        return 1
+    for p in hooks.iterdir():
+        if p.is_file() and not os.access(p, os.X_OK):
+            p.chmod(p.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    if current(root) == WANT:
+        print(f"core.hooksPath is already {WANT}")
+        return 0
+    rc, out = git(root, "config", "core.hooksPath", WANT)
+    if rc != 0:
+        print(f"setup-hooks: git config failed: {out}", file=sys.stderr)
+        return 1
+    print(f"core.hooksPath set to {WANT}: the commit gate is active in this clone")
+    return 0
+
+
+def check(root: Path) -> int:
+    if current(root) == WANT:
+        print(f"ok: core.hooksPath = {WANT}")
+        return 0
+    print(f"not set: run bin/setup-hooks (core.hooksPath is '{current(root)}')")
+    return 1
+
+
+def selftest() -> int:
+    fails = []
+    with tempfile.TemporaryDirectory() as t:
+        root = Path(t)
+        if git(root, "--version")[0] != 0:
+            print("setup-hooks selftest: git not found; skipped")
+            return 0
+        if setup(root) == 0:
+            fails.append("setup outside a git repository should fail")
+        env_keep = os.environ.get("GIT_CONFIG_GLOBAL")
+        os.environ["GIT_CONFIG_GLOBAL"] = os.devnull
+        try:
+            git(root, "init", "-q")
+            (root / WANT).mkdir()
+            hook = root / WANT / "pre-commit"
+            hook.write_text("#!/bin/sh\nexit 0\n")
+            hook.chmod(0o644)
+            if check(root) == 0:
+                fails.append("--check should fail before setup")
+            if setup(root) != 0 or current(root) != WANT:
+                fails.append("setup did not set core.hooksPath")
+            if not os.access(hook, os.X_OK):
+                fails.append("setup did not make the hook executable")
+            if setup(root) != 0:
+                fails.append("setup is not idempotent")
+            if check(root) != 0:
+                fails.append("--check should pass after setup")
+        finally:
+            if env_keep is None:
+                os.environ.pop("GIT_CONFIG_GLOBAL", None)
+            else:
+                os.environ["GIT_CONFIG_GLOBAL"] = env_keep
+    for f in fails:
+        print("FAIL", f)
+    print("setup-hooks selftest:", "FAIL" if fails else "ok")
+    return 1 if fails else 0
+
+
+def main(argv: list[str]) -> int:
+    if argv and argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    if argv and argv[0] == "--selftest":
+        return selftest()
+    root = Path(__file__).resolve().parent.parent
+    if argv and argv[0] == "--root":
+        if len(argv) < 2:
+            print("setup-hooks: --root needs a directory", file=sys.stderr)
+            return 2
+        root, argv = Path(argv[1]).resolve(), argv[2:]
+    if argv and argv[0] == "--check":
+        return check(root)
+    if argv:
+        print(__doc__, file=sys.stderr)
+        return 2
+    return setup(root)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

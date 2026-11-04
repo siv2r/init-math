@@ -1,0 +1,11 @@
+## Literature wiki
+
+- **raw source**: a file in `wiki/raw/` recording a source as ingested (its text, or a pointer to it). Never edited afterwards.
+- **ingest**: bring a source into the project so it can be used without opening it again: its raw record, a synthesized article{{#if modules.known_results}}, its results in `wiki/known-results/`{{/if}}, the folder indexes and the wiki log, in one commit (the `ingest` skill). A file in `wiki/raw/` alone is not an ingest.
+- **pointer file**: a raw source that records where a source is instead of its text (`kind: pointer`), because the text cannot be committed; it states why (`pointer-reason:`) and quotes every statement the project uses.
+- **inbox item**: a file in `wiki/inbox/` naming one source someone wants read, and why. Deleted once the source is ingested and synthesized.
+- **synthesized article**: a page in `wiki/concepts/` explaining one bounded idea in the project's terms, drawn from raw sources, with a confidence level and its reason, and a `## Sources` list.
+- **reference page**: a page in `wiki/references/` collecting sources or results: a reading list, an annotated bibliography, a comparison table.
+- **synthesize before experimenting**: the rule that a source's result or method is written up as an article before it drives an experiment or a proof.
+- **folder index**: the `_index.md` in each wiki folder, listing its files. Read it before scanning the folder.
+- **wiki log**: `wiki/log.md`, one appended entry per operation on the wiki, never edited.

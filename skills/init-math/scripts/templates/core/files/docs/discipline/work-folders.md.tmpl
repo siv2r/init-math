@@ -1,0 +1,70 @@
+# Work folders: where each file goes
+
+Open this when you are about to create a file and it is not obviously a question,
+conjecture, source or experiment. The index is [work/_index.md](../../work/_index.md).
+
+## Why
+
+A project that runs for weeks produces hundreds of working files: lemmas in progress,
+estimates, plans, briefs, check scripts. Dropped into one flat folder they cannot be
+navigated: the next session cannot tell a live document from a superseded one, which line
+of work a file belongs to, or what a finished line of work established. Each kind of file
+therefore has one home.
+
+## Where each file goes
+
+| What | Where |
+|---|---|
+| a line of work that is not an experiment (a proof campaign, a family of estimates, a literature pass) | its own folder, `work/<slug>/`, copied from `work/TEMPLATE/` |
+| its plan, RESUME HERE and progress log | `work/<slug>/README.md` |
+{{#if modules.attempts}}
+| each line of attack on it: where it broke, what it established, what would revive it | `wiki/attempts/`, through `bin/attempts` |
+{{/if}}
+| its working documents, proofs in progress, staging record | `work/<slug>/` |
+| a small script that checks a computation for it | `work/<slug>/checks/` |
+| a brief for an agent, a throwaway note or check (never a manuscript) | `work/<slug>/scratch/` (git ignores it) |
+{{#if modules.experiments}}
+| a computation with a driver, runs and an analysis | an experiment, `experiments/<slug>/` |
+{{/if}}
+{{#if modules.commit_gate}}
+| a reviewer's verdict text | nowhere: pipe it into `bin/gate-stamp ... -`, which keeps it in `.gates/stamps.jsonl` |
+{{/if}}
+{{#if modules.literature}}
+| what a source says and what we take from it | the literature wiki (the `ingest` skill) |
+{{/if}}
+| a standing note about how the project works | `notes/` (the workflow journal{{#if modules.program_review}}, program goals and reviews{{/if}}) |
+
+**One folder per line of work, named for what it is trying to establish**
+(`work/corner-smoothing-mechanism/`), not for a date or a session. {{#if modules.attempts}}A new line of attack on the
+same goal gets an attempt record (`bin/attempts new work/<slug>#<brick> "<approach>"`) whose
+target names this folder, not a new folder; the README links them.{{else}}A new attempt at the same
+goal is a new section in the same README, not a new folder.{{/if}}
+*Why:* a folder per goal is what lets the next reader find everything about it in one place.
+*Anti-scope:* a one-step task that produces a single file does not need a folder; put the
+file in the folder of the work it serves.
+
+**Keep the README current.** Its RESUME HERE names the exact next step; its `## Files`
+section says what each file holds and whether it is a draft, reviewed or superseded.
+*Why:* the README is what a fresh session reads instead of opening every file.
+
+**Close a folder when its work ends.** Set `status: done` or `parked` in the README and in
+`work/_index.md`, and write the **Outcome**: what was established and at what strength,
+what failed and why, and where each result now lives{{#if modules.conjectures}} (a conjecture file{{#if modules.known_results}}, a
+known result{{/if}}, a write-up){{/if}}. A result that exists only inside a work folder is not yet
+part of the project's record.
+{{#if modules.questions}}
+When a question is parked or answered, close the work folders that serve it in the same
+change.
+{{/if}}
+*Why:* an open folder whose work stopped weeks ago reads as live, and the next agent resumes
+it.
+*Anti-scope:* do not delete a closed folder's files; they are the record of how the result
+was reached.
+
+**Scratch is scratch.** Nothing in a `scratch/` folder may be cited or relied on: it is not
+committed. Anything worth keeping moves out of it into the work folder; a manuscript never
+starts there. A reminder fires when a `.tex` or `.bib` file is created in a `scratch/`
+folder, and `bin/doctor`{{#if modules.commit_gate}} and the commit gate warn{{else}} warns{{/if}} about a manuscript or a week-old file left
+in one.
+*Why:* git ignores `scratch/`, so a draft kept there is in no commit: it is lost with the
+folder and invisible to every review.

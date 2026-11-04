@@ -1,0 +1,13 @@
+[hygiene]
+# House rules for proofs in this field, used by bin/math-hygiene-scan and the proof-referee.
+# A plain sentence is a checklist item for the reviewer. An entry of the form
+# 're:<regex> :: <message>' is also applied mechanically to every line of a document.
+rules = [
+{{#each toml.stack.hygiene_rules}}
+  {{.}},
+{{/each}}
+]
+
+[scans]
+# Tokens bin/define-check should treat as standard notation in this field (e.g. "E8", "S3").
+define_ok = []

@@ -1,0 +1,25 @@
+{
+  "project": {
+    "name": "Ramsey Bounds",
+    "owner": "B. Mathematician",
+    "field": "combinatorics",
+    "research_kinds": ["theory"],
+    "init_date": "2026-10-08"
+  },
+  "harness": "codex",
+  "stack": {"proof_assistant": "none"},
+  "modules": {"disable": [], "enable": [], "preset": "theory-only"},
+  "seeds": {
+    "questions": [
+      {
+        "id": "Q001",
+        "slug": "diagonal-ramsey-exponent",
+        "sentence": "What is the exponential growth rate of the diagonal Ramsey number R(k, k)?",
+        "answer_shapes": ["the constant c with R(k,k) = (c + o(1))^k", "an improved upper bound below 3.8"]
+      }
+    ],
+    "active_question": "Q001",
+    "conjectures": [],
+    "sources": []
+  }
+}

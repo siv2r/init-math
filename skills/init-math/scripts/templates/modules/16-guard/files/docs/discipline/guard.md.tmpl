@@ -1,0 +1,107 @@
+# The safety guard
+
+`hooks/guard.py` reads every shell command an agent is about to run and refuses a small
+set of commands that are destructive, that need the owner's hands, that skip a review
+gate, or that are certain to fail. `hooks/cd-drift-nudge.py` catches one common working-directory slip. Both are a
+guardrail against the natural spellings of a mistake, not a sandbox: deliberate
+obfuscation can get past them.
+
+The guard parses the command as a shell would (quotes, `&&` / `;` / `|`, heredocs, the
+script inside `sh -c` or `eval`, and wrappers such as `sudo`, `env`, `xargs`, `timeout`).
+So a commit message that mentions `rm -rf` is not mistaken for one, while
+`sh -c 'rm -rf x'` is caught.
+
+## What it refuses
+
+**1. Recursive deletes**: `rm -r` in any spelling (`-R`, `-rf`, `-fr`, `--recursive`), a
+recursive `rm` run by `find -exec`, and `find ... -delete`.
+*Why:* one wrong path or an empty variable deletes a tree of work, and nothing brings it
+back. *Instead:* delete specific named files, and write scratch output into a fresh
+timestamped directory so nothing needs cleaning up.
+
+**2. A force push or delete of a main branch** (`--force`, `-f`, `--force-with-lease`, a
+`+refspec`, `--mirror`, `:main`, `--delete main`). The protected branches are
+`[guard] main_branches` in `project.toml`. *Why:* it rewrites or removes history other
+people and sessions build on. Force-pushing your own feature branch is allowed.
+
+**3. A download handed to a shell**: `curl ... | sh`, `sh -c "$(curl ...)"`,
+`bash <(curl ...)`. *Why:* it runs code nobody has read. *Instead:* treat a downloaded
+install script like a step that needs the owner (rule 5): write {{owner}} the steps and let
+them run it. This check refuses only the one-line form; the rule covers saving the script
+and running it too, because installing a tool is {{owner}}'s decision.
+
+**4. Under zsh only, two commands certain to fail there**: an unquoted `=word` after
+`echo` / `printf`, and an assignment to `status` or `pipestatus`. *Why:* zsh aborts the whole
+call, including any setup bundled with it.
+
+**5. A step that needs the owner**: `sudo` or `doas` anywhere in the command (after `env`,
+`xargs` or `timeout`, in a pipeline, inside `sh -c`, run by `find -exec`), and a `chmod` that
+makes files writable by every user on the machine: a numeric mode whose last digit includes
+write (`777`, `0777`, `666`, `1777`, ...) or a symbolic clause such as `o+w`, `a+w`, `o=rw`,
+`ugo+rwx`, with or without `-R`. Naming the command without running it (`command -v sudo`,
+`grep sudo`) is fine, and so is `chmod +w`, which the umask keeps away from other users.
+*Why:* administrator rights and world-writable files change the machine outside the
+project, often in ways that are hard to see and hard to undo; installing a tool is the usual
+reason, and that is the owner's decision. *Instead:* do not retry the command, rephrase it,
+or reach the same effect another way. Write the owner short step-by-step instructions that
+cover **only the steps they must perform themselves**, with the exact commands, and for each
+step what it changes, the risk, how to undo it, and anything to check first (for example
+that a package comes from the expected source, or that a narrower permission would do).
+Then carry on with the work that does not depend on those steps, and pick the rest up once
+the owner says they are done.
+
+*Lifting 1–5:* the owner runs `export GUARD_OFF=1` in the shell that launches the agent. A
+`GUARD_OFF=1` written inside the agent's command does nothing; it has to come from the owner.
+
+## What it never allows from an agent
+
+Setting `GATE_OK` (an owner-only override for commit checks), `git ... --no-verify`, `git commit -n`
+and `git -c core.hooksPath=...`. *Why:* each one skips the checks the project put in
+front of its durable record, and deciding to skip them is the owner's call. The guard
+refuses these even with `GUARD_OFF=1` and logs each attempt to `logs/feedback.jsonl`
+(`kind: bypass`), so the owner sees it.
+*If you think a bypass is warranted:* say so, explain why, and let the owner run the
+command themselves.
+{{#if modules.reflect}}
+The reflection pass reads these log entries alongside the rest of the feedback log.
+{{/if}}
+
+## What it nudges about
+
+A nudge refuses the command once, with the reason; re-issuing the identical command
+proceeds.
+
+- **`git add -A` / `--all` / `.`** stages everything in the tree, including files another
+  session or a scratch run left behind. Stage exact paths and commit with a pathspec,
+  `git commit -- <paths>`. Switch off with `nudge_git_add_all = false`.
+- **In-place `sed -i` / `perl -i` on `.md`, `.tex`, `.txt`.** These can silently damage
+  UTF-8 text (math symbols especially), and a write outside the edit tool can break the
+  harness's record of which files it has read. Use the edit tool. Switch off with
+  `nudge_inplace_docs = false`.
+- **Under zsh (the nudge fires only when the hook's `$SHELL` is zsh), an unquoted `$VAR` passed to `git add`, `git commit` or `rm`.** zsh does not
+  split an unquoted variable into words, so a list of paths arrives as one bogus path.
+  List the paths explicitly.
+- **cd drift** (`hooks/cd-drift-nudge.py`): a command that starts `cd <dir> && grep ...`
+  (or `ls`, `cat`, `find`, and other lookups). Where the shell persists between calls,
+  that `cd` moves every later command too, and a later relative path runs from the wrong
+  place. Pass an absolute path instead. It reminds once per session, and ignores a `cd`
+  that does not move (`cd "$PWD"`, `cd .`, the project root). Bypass: `CD_DRIFT_OK=1`. It
+  does nothing on harnesses whose shell calls do not share a working directory.
+
+## Anti-scope
+
+The guard does not judge whether a command is a good idea, only whether it is one of
+these specific mistakes. It does not stop a determined bypass (a variable holding the
+command name, generated code), and it is not a substitute for backups or for running
+untrusted code in a sandbox.
+
+## When it is wrong
+
+A false refusal is a bug in the guard. For a refusal under items 1–4, rephrase the command
+(or, for a nudge, re-issue it). A refusal under item 5, or of a bypass, is never rephrased
+even if you think it false: write the owner's instructions (item 5) or ask the owner
+(bypass). Either way, record the case so the guard can be fixed: what you ran and why it
+was safe.
+{{#if modules.reflect}}
+Use the `friction` skill for this.
+{{/if}}

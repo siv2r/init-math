@@ -1,0 +1,155 @@
+# Reflection loop
+
+How this project improves its own way of working. Friction is written down the moment it
+happens; every so often a **reflection pass** reads what is new, finds what keeps
+recurring, and turns it into a small fix (a note, a nudge, a check). Small reversible fixes
+are applied at once; anything that changes how the project is governed waits for
+{{owner}}'s yes.
+
+The loop has five steps: **capture → review → route → land → audit.** The procedure is in
+the `reflect` skill; this doc is the reasoning and the record formats.
+
+## 1. Capture: what gets written down, and by whom
+
+| Record | Written by | One row means |
+|---|---|---|
+| `logs/failures.jsonl` | the `reflect-on-failure` hook | a research command failed |
+| `logs/friction.jsonl` | the `friction` skill (agent or owner), hooks | something went badly or wasted effort |
+| `logs/feedback.jsonl` | the agent, when the owner corrects or praises; gate bypasses | the owner reacted to how the work was done |
+| `logs/nudges.jsonl` | `hooks/_payload.py`, automatically | a nudge fired (which hook, which key) |
+| `notes/workflow-journal.md` | anyone, in prose; each reflection pass | a note too long for one log row, and the record of each pass |
+| `logs/proposals.jsonl` | `bin/journal --propose` and `--decide` | a change waiting for {{owner}}'s decision, or the decision |
+
+Each log is one JSON object per line; the writer adds `ts` and `id`. For the fields of a
+friction, feedback or journal row, see `bin/journal --help` (the `--kind`, `--source`,
+`--label` and `--now` options). Two formats are not covered there:
+
+- **failures**: `{"signature": "<label>", "command": "<first line, ≤200 chars>", "excerpt": "<matching output line>"}`.
+  The signature is the label of the `[[stack.failure_signatures]]` pattern that matched, or
+  `<program>-exit-nonzero` when the command simply exited non-zero.
+- **journal**: a Markdown bullet `- [YYYY-MM-DD] KIND: text`. `KIND` is `NOTE` by default,
+  `REFLECT` for a pass's own record{{#if modules.retro}}, `RETRO` for a retrospective's counterfactual{{/if}}.
+
+Write rows with `bin/journal --add` (it fills `ts` and `id` and checks the fields), never by hand in
+an editor: a hand-edited JSONL line is easy to break and impossible to tell from a real row.
+
+The capture rules:
+
+- **Log your own friction in the same turn you notice it** — a failed launch, a step you
+  had to redo, a wrong assumption, a convention that got in the way: `bin/journal --add
+  friction "<one line>"`. *Why:* friction that waits for "later" is not logged, and a pass
+  can only fix what it can see. *Anti-scope:* routine dead ends of research (a conjecture
+  that turned out false) are results, not friction.
+- **When the owner corrects how you work, log it as feedback** (`--kind correction`); a
+  correction about the mathematics belongs in the research record, and when it corrects a
+  *kind* of step (not a one-off fact) also log one line as `--kind math`, so a pass can
+  propose a scan or a reviewer instruction when that kind recurs. *Why:* repeated
+  corrections are the strongest signal the setup is missing a rule. *Anti-scope:* don't log
+  ordinary instructions ("now do X") as corrections.
+- **Failures are captured by the hook**, which acts only on the programs listed in
+  `project.toml` `[stack] research_commands` and is silent until a signature recurs. With
+  that list empty it does nothing. Add a `[[stack.failure_signatures]]` pattern when a tool
+  reports failure with exit status 0 (a "stack overflow" line, a "did not converge"
+  warning).
+- **Every few turns with nothing logged, a reminder asks** whether anything went wrong
+  (`[reflect] friction_nudge_every` in `project.toml`; 0 turns it off).
+
+## 2. Review: what is "new", exactly
+
+`bin/journal --show-new` prints every row not yet reviewed, from all four records at once,
+and remembers exactly which rows it printed. `bin/journal --mark-reviewed` marks those rows
+— and only those — as reviewed, and inserts a `<!-- reviewed YYYY-MM-DD -->` marker into the
+journal where the printed entries ended.
+
+- **Never buried:** a row logged *during* a pass was not printed, so it stays new for the
+  next pass. That is why `--show-new` runs once, at the start, and is not re-run before
+  `--mark-reviewed`.
+- **Never double-counted:** rows are identified by their content, so a row already reviewed,
+  or duplicated by a git merge, is not shown again.
+- Review state lives in `logs/state/` (not committed): a fresh clone shows every row as new
+  once. The journal marker *is* committed, so journal notes are not re-shown.
+
+## 3. Route: which fixes are applied, which are asked
+
+Draft at most four fixes, one per cluster that warrants one; a pass that finds nothing worth
+changing says so. First place each cluster on the **ladder**:
+
+1. **Prose** — a sentence in a discipline doc or skill. Right for a first occurrence or a
+   judgment-heavy problem.
+2. **Nudge** — a hook that refuses once with an explanation and lets an identical retry
+   through. Right when the friction **recurred despite existing prose**: the recurrence is
+   the evidence that prose is not holding, so do not propose the same sentence again.
+3. **Hard check** — a hook or script that blocks. Only when a nudge is demonstrably ignored
+   and the failure is costly; always with a stated bypass.
+
+*Why the ladder:* a rule nobody reads at the right moment does not change behaviour, but a
+check on every action costs everyone forever; climb one rung at a time, on evidence.
+*Anti-scope:* keeping a re-violated rule as prose is allowed if you say why (the check would
+fire falsely too often, or the case is irreducibly a judgment call).
+
+Often the right fix is a **setting**, not a rule. The interview started this project on
+defaults instead of asking the owner for details they could not know yet; those defaults are
+tuned here, from what actually happened:
+
+- a run that printed a failure but exited normally → a `[[stack.failure_signatures]]`
+  pattern in `project.toml` (the defaults cover only the common cases of the project's tools);
+- the owner correcting the same wording in write-ups twice → a rule in `[hygiene] rules`;
+{{#if modules.experiments}}
+- runs stopped by the watchdog that should have been allowed, or that ran far too long →
+  `[experiments.limits]`;
+{{/if}}
+- a new tool the agents now run → `[stack] research_commands`.
+
+Then route each fix by [the autonomy heuristics](../../notes/reflect-autonomy-heuristics.md),
+which holds the full AUTO and ASK lists. An AUTO fix is applied in the pass; an ASK fix is
+proposed and waits. A boundary case is ASK.
+
+**Scope every proposal** with two parts: the *narrowest* class the evidence supports, and
+an *anti-scope* (what it must not gate, its collateral cost). Then reread it as the owner
+will — someone who knows the project but did not see this session — and spell out every
+reference to this session's events or shorthand.
+
+## 4. Land
+
+- An AUTO fix is one commit with the subject `chore(reflect auto): <what>`, and one journal
+  line `REFLECT: [auto-applied] <what> — <why> (rule: AUTO-n; undo: git revert <sha>)`. `AUTO-n` is the numbered AUTO clause in
+  the heuristics file that justified applying it.
+- A hook fix is self-tested on all four branches before it lands
+  ([hook authoring](hook-authoring.md)).
+- An ASK proposal is queued with `bin/journal --propose` (one row in `logs/proposals.jsonl`
+  and a journal line) and put to the owner with its tradeoff, numbered among all pending
+  proposals (`bin/journal --pending`); `bin/journal --shown` records that it was. The owner's
+  answer is recorded with `bin/journal --decide <id> yes|no`, which also writes the journal
+  line (`approved …` or `declined … — <reason>`, so it is not proposed again unchanged). An
+  approved change is applied and committed in the same turn (subject `chore(reflect): <what>`).
+- *Why a queue:* a proposal written only into a notes file, or mentioned once at the end of
+  a long report, is never decided; the owner says "continue" and it is lost. Until it is
+  decided, the `proposals-nudge` hook brings it back: a new proposal is listed at the end of
+  the turn that queued it, and anything still pending gets a one-line reminder once per
+  session. A "continue" decides nothing.
+- Close the pass with `bin/journal --mark-reviewed`.
+
+## 5. Audit: is AUTO routing still trusted?
+
+`git log --oneline --grep='reflect auto'` lists every auto-applied fix. At each pass, note
+which of them the owner reverted, narrowed or objected to. The agent running the pass records
+each pass in the heuristics file's tables. If an auto-applied fix draws an objection of the "one incident made into a
+rule" or "widened a permission" kind, the AUTO clause was too loose: tighten the clause,
+don't just revert the fix.
+
+## When to run a pass
+
+At a natural stopping point, never in the middle of a task: when a failure nudge suggests
+it, when several friction rows have piled up, or when {{owner}} asks. A pass is run by the
+coordinating agent in the main session, not by a worker.
+{{#if modules.retro}}
+
+A **retrospective** (the `retro` skill; follow its steps) is the slower sibling: it reads
+the owner's messages over recent sessions, labels each correction, and asks what structure
+would have made the correction unnecessary.
+{{/if}}
+{{#if modules.program_review}}
+
+A **program review** (the `program-review` skill) steps back further: it checks the
+project's direction against [the program goals](../../notes/program-goals.md).
+{{/if}}

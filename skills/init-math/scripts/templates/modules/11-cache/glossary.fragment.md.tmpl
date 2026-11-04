@@ -1,0 +1,10 @@
+## Computed-results cache
+
+- **cache table**: a tab-separated file under `cache/results/` with one computed value per row: the key columns, then `quantity`, `value`, `provenance`, `date`.
+- **key columns**: the columns that identify the object a value is about, set in `project.toml` under `[cache]`.
+- **canonical key**: the key after reduction to one standard form, so two spellings of the same object (a reordered list, a relabelled graph) count as the same object.
+- **canonicalizer**: the optional command in `project.toml [cache]` that computes canonical keys.
+- **conflict**: two rows with the same canonical key and quantity but different values. It means one computation is wrong or the key is not canonical enough.
+{{#if modules.experiments}}
+- **results catalog**: an experiment's own cache table, `experiments/<slug>/results-catalog.tsv`. Lookups read it together with `cache/results/`, so concurrent experiments never edit the same file.
+{{/if}}

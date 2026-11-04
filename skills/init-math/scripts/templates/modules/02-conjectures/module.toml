@@ -1,0 +1,15 @@
+id = "conjectures"
+number = 2
+title = "Conjecture ledger and residue backlog"
+group = "A"
+status = "included"
+order = 20
+summary = "One file per conjecture, stated as a connection between properties on a named family, tied to a question; refuted entries are kept, and the backlog is rebuilt from @residue lines across all statuses."
+depends = ["questions"]
+
+allow_commands = ["bin/residues"]  # pre-approved: checks and records only
+
+[[per_item]]
+template = "conjecture.md.tmpl"
+over = "seeds.conjectures"
+path = "wiki/conjectures/{id}-{slug}.md"

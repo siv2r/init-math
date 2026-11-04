@@ -1,0 +1,12 @@
+# Append-only stores: when two branches both append, keep both sets of lines instead of
+# raising a conflict. A union merge can leave duplicate or out-of-order lines; readers
+# de-duplicate (by each row's `id`, or by a table's key) and never rely on line order.
+# After a merge, tidy duplicate rows in the markdown tables by hand.
+logs/*.jsonl merge=union
+.gates/*.jsonl merge=union
+notes/workflow-journal.md merge=union
+wiki/**/log.md merge=union
+wiki/**/_index.md merge=union
+experiments/_index.md merge=union
+experiments/*/results-catalog.tsv merge=union
+cache/results/*.tsv merge=union

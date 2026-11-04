@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Look a term up in GLOSSARY.md (and SEARCH-ALIASES.md) without reading the whole file.
+
+selftest: yes
+
+    bin/glossary <term> [<term> ...]   the entries for each term
+    bin/glossary --selftest            run the built-in tests
+
+For each term, case-insensitive, it prints in order:
+  1. the glossary entries whose name matches (`- **<name>**: ...`): the name itself, the
+     name without a trailing "s", or a name that starts with the term;
+  2. the SEARCH-ALIASES.md rows whose first column mentions it (what the project calls an
+     idea you know under another word);
+  3. if neither found anything, up to five entries whose definition mentions it.
+Nothing found: exit 1, with the glossary's rule (a term a document uses and nobody defines
+is a defect: define it in GLOSSARY.md).
+"""
+from __future__ import annotations
+
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+ENTRY = re.compile(r"^- \*\*(.+?)\*\*")
+MAX_MENTIONS = 5
+
+
+def entries(root: Path) -> list[tuple[str, str]]:
+    try:
+        lines = (root / "GLOSSARY.md").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    return [(m.group(1), ln) for ln in lines if (m := ENTRY.match(ln))]
+
+
+def alias_rows(root: Path) -> list[tuple[str, str]]:
+    try:
+        lines = (root / "SEARCH-ALIASES.md").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    out = []
+    for ln in lines:
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if ln.startswith("|") and len(cells) >= 3 and not set(cells[0]) <= set("-: ") \
+                and cells[0] != "If you searched for":
+            out.append((cells[0], ln))
+    return out
+
+
+def norm(s: str) -> str:
+    return " ".join(s.lower().replace("`", "").split())
+
+
+def name_matches(name: str, term: str) -> bool:
+    n, t = norm(name), norm(term)
+    bare = n.split(" (")[0]
+    return t in (n, bare) or t.rstrip("s") in (n, bare) or bare.startswith(t)
+
+
+def lookup(root: Path, term: str) -> list[str]:
+    es = entries(root)
+    out = [ln for name, ln in es if name_matches(name, term)]
+    t = norm(term)
+    out += [ln for first, ln in alias_rows(root)
+            if any(t == norm(w) or t in norm(w) for w in first.split(","))]
+    if not out:
+        out = [ln for name, ln in es if t in norm(ln)][:MAX_MENTIONS]
+    return out
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 2
+    if argv[0] == "--selftest":
+        return selftest()
+    missing = 0
+    for term in argv:
+        found = lookup(ROOT, term)
+        print(f"== {term}")
+        if found:
+            print("\n".join(found))
+        else:
+            missing += 1
+            print(f"no entry for '{term}' in GLOSSARY.md or SEARCH-ALIASES.md. If a document uses "
+                  "it and does not define it, that is a defect: define it in GLOSSARY.md.")
+    return 1 if missing else 0
+
+
+def selftest() -> int:
+    fails = []
+    with tempfile.TemporaryDirectory() as t:
+        root = Path(t)
+        (root / "GLOSSARY.md").write_text(
+            "# Glossary\n\nIntro mentioning brick.\n\n## General\n\n"
+            "- **brick**: one unit of work a worker can finish.\n"
+            "- **question-tie (conjecture field)**: one sentence on what a verdict changes.\n"
+            "- **residue**: a recorded next step, an `@residue` line.\n"
+            "- **long job**: anything over about two minutes; the coordinator starts it.\n")
+        (root / "SEARCH-ALIASES.md").write_text(
+            "| If you searched for | The project calls it | Where |\n|---|---|---|\n"
+            "| next step, to-do, backlog | `@residue` | `bin/residues` |\n")
+        cases = [("Bricks", "**brick**"), ("question-tie", "question-tie (conjecture field)"),
+                 ("backlog", "`@residue`"), ("long", "**long job**"),
+                 ("two minutes", "**long job**")]
+        for term, want in cases:
+            got = "\n".join(lookup(root, term))
+            if want not in got:
+                fails.append(f"{term!r}: expected {want!r}, got {got!r}")
+        if lookup(root, "zebra"):
+            fails.append("an unknown term should find nothing")
+        if any("Intro" in x for x in lookup(root, "brick")):
+            fails.append("only entry lines are returned")
+    print("glossary selftest: " + ("ok" if not fails else "FAIL\n  " + "\n  ".join(fails)))
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

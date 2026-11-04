@@ -1,0 +1,83 @@
+---
+name: attack
+description: Choosing and running lines of attack on a hard target — approaches and the move menu, budgets, the stall audit. Load it when you choose a route after a worker's NEED-DIRECTION, when a brick turns out deep, or when bin/attempts prints AUDIT DUE or BUDGET REACHED.
+---
+
+# Attack
+
+The ledger's rules are in [docs/discipline/attempt-loop.md](../../../docs/discipline/attempt-loop.md);
+worked examples of the moves are in [docs/discipline/moves.md](../../../docs/discipline/moves.md).
+
+## 1. Start from the ledger
+
+Run `bin/attempts --summary`, then `bin/attempts --obstructions <target>`. Handle a flag
+first. Never re-propose a refuted statement; revive a set-aside line only with
+`bin/attempts revive <id> --because "<what changed>"`.
+
+## 2. Approaches
+
+- **List genuinely different approaches**: different in what they would have to prove, not
+  in wording. Two will do for a routine brick; a target nobody has done deserves more.
+  `bin/attempts --moves` gives prompts; its order is noisy on purpose, so read past the top.
+- **Read `[field_profile]` in project.toml, and the target's `small-cases:`.** Where small
+  cases say little about the claim, the cheapest first step is the one that would falsify or
+  narrow the plan, not the smallest instance.
+- **An approach that rests on an informal argument** (a heuristic, a "morally" step, an
+  analogy) is written as checkable parts first (`docs/discipline/informal-arguments.md`).
+- **Pick one, or several that can run in parallel.** Each picked approach gets
+  `bin/attempts new <target> "<approach>" --moves <ids>`; the rest go in its
+  `## Alternatives not chosen`.
+
+## 3. Budgets (principle: budget-review)
+
+A line's budget is `[attempts] budget_returns` worker returns or sessions. At
+`BUDGET REACHED` the coordinator decides, never the worker:
+
+- **extend**, when the line is productive, naming the sign (a new lemma, a shrinking
+  obstruction, a partial result, the argument's shape becoming clear):
+  `bin/attempts extend <id> --because "<the sign>"`;
+- **switch**: set the line aside with where it stands, and start another;
+- **step down a rung** (a special case, a conditional result, a counterexample to a
+  weakening, an adjacent question): a new record for the rung, then
+  `bin/attempts dormant <id> --stepped-down`.{{#if modules.questions}} On a question {{owner}} activated, ask
+  {{owner}} first.{{/if}}
+- **set it aside.**{{#if modules.questions}} If it is the last open line on a question {{owner}} activated (or on
+  a target serving only that question), ask {{owner}} first: that is when the direction of
+  their question changes.{{/if}}
+
+A spent budget changes the attempt, not the mandate: the target stays the goal. If you ran
+the line yourself, log why you chose what you chose; program review reads it.
+
+**Construction work** (`[field_profile] construction = true`): an attack that breaks the
+current construction is `bin/attempts log <id> "<what broke>" --refuted-by "<witness>"`, and
+the fix is `log --repair`. Repairs spend no budget, and a repair that answers the recorded
+attack is the same line, not a re-proposal.
+
+## 4. Audit (principle: stall-audit)
+
+At `AUDIT DUE`, before the next attempt on the target. Repeated failure counts against the
+approaches, and only weakly against the claim.
+
+1. **What does the current belief rest on?** List the evidence, and which of it is more
+   than "we have not found a way".
+2. **What do all the tested examples share that the claim does not require?** Test the
+   smallest example outside that.
+3. **Which way is small-case bias likely to run?** Where a decision procedure exists,
+   decide rather than sample.
+4. **Try the opposite direction**: a counterexample if you were proving, a proof if you
+   were refuting. Skip it when the statement is a published theorem whose source has been
+   read firsthand, or matched to a formal library's statement, and is recorded{{#if modules.known_results}} (a
+   `wiki/known-results/` file){{/if}}; say so in the audit record.
+5. **List concrete rival statements** (a weaker form, a different range, the negation in a
+   sub-family), and say which the evidence favours.
+6. **Name the adjacent questions** the audit turned up. Propose few{{#if modules.questions}}, through the
+   `new-question` skill{{/if}}.
+
+Record it: `bin/attempts log <newest counted line> "@principle:stall-audit — <what it produced>"`.
+A bare tag does not clear the flag.
+
+## 5. At close
+
+When a line closes (`set-aside`, `refute`, `succeed`, `dormant --stepped-down`), credit the
+moves that actually helped with `--contributed <ids>`, in hindsight; none is a fine answer.
+The credits move the scores behind `--moves`.

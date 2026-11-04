@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""scope-estimate-scan: list difficulty and absence estimates in a document.
+
+Run before committing a handoff, design note, write-up or README. Each hit ("multi-week",
+"from scratch", "out of scope", "intractable" ...) is a claim that can stop or redirect
+work. For each one, confirm a real search or a reduction attempt backs it; if not, do that
+first, or cite where the estimate came from. It cannot tell a backed estimate from an
+unbacked one, so it over-reports by design. Advisory: always exits 0.
+See docs/discipline/scans.md.
+
+selftest: yes
+usage: bin/scope-estimate-scan <file> [file ...]   |   --selftest
+"""
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+PHRASES = [
+    r"multi[- ](?:week|month|day|year|session)s?", r"\b(?:several|many) (?:weeks|months)\b",
+    r"from scratch", r"must be built", r"needs? to be built", r"would have to be built",
+    r"absent from (?:the )?(?:library|libraries|literature)", r"not in (?:the )?library",
+    r"out of scope", r"intractable", r"infeasible", r"impossible to", r"deep core",
+    r"can(?:no|')t be (?:done|built|proved|proven|computed)", r"far too (?:hard|expensive)",
+]
+PHRASE_RE = re.compile("|".join(PHRASES), re.I)
+SUMMARY_LEAD = re.compile(r"^\s*[*_>\-\s]*\**\s*(net|verdict|summary|conclusion|status|next|remaining|plan)\b", re.I)
+FENCE = re.compile(r"^\s*(```|~~~)")
+ORDER = {"HEADER": 0, "SUMMARY": 1, "BOLD": 2, "body": 3}
+
+
+def locus(line: str) -> str:
+    s = line.lstrip()
+    if s.startswith("#") or s.startswith("\\section") or s.startswith("\\subsection"):
+        return "HEADER"
+    if SUMMARY_LEAD.match(line):
+        return "SUMMARY"
+    if "**" in line:
+        return "BOLD"
+    return "body"
+
+
+def scan(text: str) -> list[tuple[str, int, str, str]]:
+    hits, fence = [], False
+    for i, line in enumerate(text.splitlines(), 1):
+        if FENCE.match(line):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        m = PHRASE_RE.search(line)
+        if m:
+            hits.append((locus(line), i, m.group(0), line.strip()))
+    return sorted(hits, key=lambda h: (ORDER[h[0]], h[1]))
+
+
+def report(src: str, text: str) -> None:
+    hits = scan(text)
+    if not hits:
+        print(f"scope-estimate-scan: no difficulty or absence estimates in {src}.")
+        return
+    print(f"scope-estimate-scan: {src}: {len(hits)} estimate(s). For each: did a real search or")
+    print("reduction attempt back it? If not, do it first, or mark the estimate as unverified and say where it came from.")
+    for loc, ln, ph, s in hits:
+        print(f"  [{loc:7}] L{ln}: \"{ph}\" — {s[:150]}")
+
+
+def selftest() -> int:
+    doc = ("# Remaining: a multi-week effort\n\nThe lemma must be built from scratch.\n"
+           "```\nintractable\n```\nNothing else.\n")
+    got = [(h[0], h[1]) for h in scan(doc)]
+    want = [("HEADER", 1), ("body", 3)]
+    if got != want:
+        print(f"selftest FAIL: {got} != {want}")
+        return 1
+    print("scope-estimate-scan selftest: ok")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("files", nargs="*")
+    ap.add_argument("--selftest", action="store_true")
+    a = ap.parse_args(argv)
+    if a.selftest:
+        return selftest()
+    if not a.files:
+        report("<stdin>", sys.stdin.read())
+        return 0
+    for f in a.files:
+        try:
+            report(f, Path(f).read_text(encoding="utf-8", errors="replace"))
+        except OSError as e:
+            print(f"scope-estimate-scan: cannot read {f}: {e}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

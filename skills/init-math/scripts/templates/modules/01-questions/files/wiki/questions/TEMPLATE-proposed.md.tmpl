@@ -1,0 +1,39 @@
+---
+id: QNNN
+status: proposed            # proposed | active | parked | answered
+activated-by:               # the owner's name, when the owner activates it
+# small-cases: not-informative   # optional; overrides [field_profile] in project.toml
+# satellite_of: Q001        # optional: a satellite of that question (the new-question skill)
+# specializes: Q001         # optional: a special case of that question, hard enough to stand alone
+---
+# QNNN: <one sentence: a question with an answer we do not have and cannot get quickly>
+
+## Reading
+<the other readings of the question and its conventions (required), then the intended
+reading and why; ambiguity you cannot resolve goes to the owner>
+
+## Answer shapes
+A1. <a concrete form the answer could take: a theorem, a formula, a classification, a decision procedure>
+A2. <another form, including a clean "no" when that is possible>
+
+## Why it matters
+<at most three sentences: what an answer would decide or connect, and which existing question this is NOT a sub-clause of>
+
+## What is known
+<what the literature or this project already has, and why the answer is not quick>
+
+## Examples
+Simplest: (none yet)
+Most structured: (none yet)
+Breakers: (none yet; one line each: `- <example> — broke <claim id> (<date>)`)
+Outside probes: (none yet: examples deliberately outside the class studied)
+
+## Ladder
+(Optional, for a question that climbs: its rungs from specific instances, to families, to the
+general class, one line each, with what is settled there. Record a tool under the rung where
+it arose; tools often appear only once the rung below is done, so do not list them in advance.)
+{{#if modules.attempts}}
+
+## Attempts
+`bin/attempts --target QNNN`
+{{/if}}

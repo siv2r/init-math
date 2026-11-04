@@ -1,0 +1,117 @@
+---
+name: new-question
+description: Load when you want to propose a new research question, or when work you are doing does not fit any active question. It sharpens the idea into ONE sentence with an answer we lack plus numbered answer shapes, files it as `proposed`, and hands it to the owner. Agents never make a question active.
+---
+
+# Propose a research question
+
+A research question is one sentence with an actual answer (a theorem, a formula, a
+classification, a decision procedure, or a clean "no") that we do not have and cannot get
+quickly. Only {{owner}} makes a question `active`; you propose. Background:
+`docs/discipline/question-ties.md`.
+
+## 1. Check it is new
+
+Read `wiki/questions/_index.md` and the question files it lists.
+- If your idea is a special case or a sub-clause of an existing question, do not file a new
+  question: propose a new answer shape for that question to the owner instead. Two
+  exceptions: a satellite (below), and a special case that is hard and interesting on its
+  own. File that one as its own proposed question, with `specializes: Q<the parent>` in the
+  frontmatter and, under `## Why it matters`, why it stands on its own (it is hard, and its
+  answer would be worth having even if the parent were settled).
+- If it is a tool or a method (a faster algorithm, a library), it is not a question: it
+  attaches to the question it serves.
+{{#if modules.known_results}}
+- Check `wiki/known-results/`: if the literature already answers it, it is not open.
+{{/if}}
+
+### Satellites
+
+A **satellite** is a smaller question around an active one: easier, but independently
+interesting, answerable, and worth a write-up of its own, and its answer would supply a tool
+or a case the main question needs. File it like any question, with
+`satellite_of: Q<the active question>` in the frontmatter and, under `## Why it matters`, the
+tool or case it supplies, written as a mechanism: `supplies: if <the satellite's answer>
+then <a step of the main question> because <the reason>`. The tie-auditor checks that claim
+as it checks any bridge. While `[questions] satellites = true` in project.toml, an open
+satellite of an active question is eligible for work without activation; with `false` it
+waits like any proposed question.
+{{#if modules.attempts}}
+Work a satellite while the main question's line is set aside or dormant, within its own
+budget (`bin/attempts new <satellite> ...`). When it yields a tool or a result, sweep it
+back: `bin/attempts --obstructions <the main question>`, and revive the line it unblocks.
+{{/if}}
+*The bar is the satellite's own interest*: an easier question that matters only as a step is
+a work-folder brick, not a satellite.
+
+### Where questions come from
+
+When a line stalls, a result lands or an example surprises you, a new question is often the
+best output. Try: dropping or negating each attribute of a statement (what-if-not); turning
+an intuition ("morally, X should hold because Y") into a claim with an answer; the special
+cases a result leaves open; the converse. Propose few, and only ones that pass this skill.
+
+## 2. Sharpen it to one sentence
+
+Test the draft against each of these; rewrite until all pass.
+- **One sentence, one question.** No "and also"; no conjectured answer inside it.
+- **Has an answer you would recognize.** Could you say what a complete answer looks like?
+  "Understand X" and "study Y" fail this.
+- **We lack the answer, and it is not quick.** If an afternoon's computation or a known
+  theorem settles it, it is a task, not a question. If it is quick and serves an active
+  question, do it as a task; otherwise mention it in your report as a quick check you could
+  run.
+
+Examples (illustrations from several fields; the left side fails, the right side passes):
+- "Study the partition function mod primes." → "For which primes l does p(l n + b) = 0 mod l
+  hold for all n, for some b?"
+- "Ramsey numbers and their growth." → "What is the exponential growth rate of R(k, k)?"
+- "Understand the moduli space of these curves." → "Is the moduli space of these curves
+  rational?"
+
+## 3. Write the answer shapes
+
+Under `## Answer shapes`, list the concrete forms the answer could take, one per line,
+numbered `A1.`, `A2.`, .... Include the negative form when it is possible ("no such
+family exists", "the bound is sharp"). Tasks will tie to these items by number, so each
+must be specific enough that a result can be said to settle or narrow it.
+
+## 4. File it
+
+1. Copy `wiki/questions/TEMPLATE-proposed.md` to `wiki/questions/QNNN-<slug>.md`, with the
+   next free number and a short slug.
+2. Keep `status: proposed` and leave `activated-by:` empty.
+3. Fill `## Reading`: the other readings of the sentence and its conventions, then the
+   intended one and why. If you cannot tell which reading {{owner}} means, ask.
+   Fill `## Examples` with any simplest or most structured examples you already know; leave
+   the rest empty.
+4. Fill `## Why it matters` (at most three sentences: what an answer would decide or
+   connect) and `## What is known`. Under `## What is known`, say why the answer is not
+   quick: what you tried, or which known result falls short. Fill `## Ladder` only when the question naturally climbs
+   from instances to families to a general class; otherwise delete it.
+5. Add a row to the table in `wiki/questions/_index.md` with status `proposed`, at the END
+   (list order is the owner's allocation order; do not reorder).
+6. Run `bin/question-check`; fix every FAIL.
+
+## 5. Hand it to the owner
+
+Give it the first look (end of this section) before you report it.
+
+{{#if harness.cap.ask_tool}}
+Tell {{owner}} what you filed: the sentence, the answer shapes, why it matters, and which
+existing question it is closest to and why it is not a sub-clause of it. If a decision is
+needed now, use the structured ask tool; otherwise put it in your report.
+{{else}}
+Tell {{owner}} what you filed, in your report: the sentence, the answer shapes, why it
+matters, and which existing question it is closest to and why it is not a sub-clause of it.
+{{/if}}
+
+Do not change any question's `status` or `activated-by:` on your own initiative. If the
+owner asks you in the conversation to activate it, set `status: active` and
+`activated-by: {{owner}}`. Until then, work that would serve only this question waits,
+unless it is an open satellite of an active question while satellites are on.
+
+**A first look is allowed before you hand it over**, so {{owner}} decides with some evidence:
+a quick literature search and a computation of small cases, within the explore cap
+(`[questions] explore_cap_minutes`, minutes, not hours). Record what it found under
+`## What is known` and `## Examples`. It needs no question tie; anything more waits.

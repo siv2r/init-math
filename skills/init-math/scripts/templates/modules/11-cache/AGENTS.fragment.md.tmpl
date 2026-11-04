@@ -1,0 +1,9 @@
+## Computed-results cache
+
+{{#if view.shared}}
+- Before computing a value about a specific object, look it up: `bin/cache lookup <key…>`.
+- After computing one worth reusing, add it with `bin/cache append cache/results/<table>.tsv …`{{#if modules.experiments}} (or have the driver write `experiments/<slug>/results-catalog.tsv`, which lookups include){{/if}}.
+- A second, different value for the same key is a CONFLICT to investigate, never to overwrite.
+
+Rules and format: [docs/discipline/results-cache.md](docs/discipline/results-cache.md).
+{{/if}}

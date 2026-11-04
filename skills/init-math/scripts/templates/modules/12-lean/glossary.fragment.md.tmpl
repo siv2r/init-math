@@ -1,0 +1,12 @@
+## Lean
+
+- **sorry**: Lean's placeholder for a missing proof. A declaration that uses it compiles with a warning but is not proved.
+- **axiom-clean**: `#print axioms` on the result lists at most `propext`, `Classical.choice` and `Quot.sound`, the standard axioms the library itself uses. `sorryAx` in the list means a `sorry` somewhere in the chain.
+- **brick**: one self-contained unit of work with a stated finish line, small enough to hand to one worker: a lemma or small group of lemmas with its statement already written, a script to write and validate, a table to fill. Remaining work is written as a numbered list of bricks.
+- **Lake project**: the directory with `lakefile.lean` or `lakefile.toml` that Lean's build tool, `lake`, builds. Its path is `lake_path` under `[stack]` in `project.toml`.
+- **toolchain pin**: the Lean version named in the project's `lean-toolchain` file. Building with a different version recompiles or breaks the library.
+- **library cache**: precompiled library files fetched by `lake exe cache get`, so the library is not compiled from source.
+- **misformalization**: a Lean statement or definition that does not say what was meant, so its "proof" proves the wrong thing. Caught by testing definitions on positive and negative cases.
+- **library-name search**: searching the library's declarations by name across the whole source tree (`bin/lib-find`), not by guessing which file should hold them.
+- **instance diamond**: two different ways Lean can find the same structure (e.g. two paths to a ring structure) that are not recognized as equal, so lemmas stated for one do not apply to the other.
+- **reduction (to a hypothesis)**: stating a hard step as an explicit premise of the theorem and proving everything else with no `sorry`.

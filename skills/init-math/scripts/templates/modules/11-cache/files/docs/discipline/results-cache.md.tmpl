@@ -1,0 +1,55 @@
+# Computed-results cache
+
+A computed value about a specific object is stored once in `cache/` and reused. The table format and
+commands are in [../../cache/manifest.md](../../cache/manifest.md). The examples on this
+page use one running example: the chromatic number of a graph, keyed by the graph's graph6
+string (any other object and quantity work the same way).
+
+## Look up before computing
+
+Before computing a value about a specific object, run `bin/cache lookup <key…>`.
+- Why: recomputing a known value wastes the budget that should go to new cases, and two
+  computations of one value that disagree go unnoticed unless they meet in one table.
+- Not for: values that are cheaper to compute than to look up (a few milliseconds), or
+  exploratory throwaway runs whose output nobody will reuse.
+
+## Key on the canonical form
+
+Two keys that name the same object must compare equal. Set `[cache].key_columns` and, when
+objects have several spellings (a graph up to relabelling, a polynomial up to scaling), a `[cache].canonicalizer` command that returns one normal form.
+- Why: without it, the same object stored under two spellings is computed twice and a
+  disagreement between the two copies is never seen.
+- Not for: keys that are already canonical by construction (an integer, a sorted tuple, a graph6 string already in canonical labelling).
+
+## A conflict is a finding, not an overwrite
+
+`bin/cache append` refuses a value that differs from one already stored for the same key and
+quantity. Find out which one is right (a bug, a precision limit, a key that is not canonical
+enough) before using `--force`.
+- Why: silently replacing a value hides exactly the error the cache is best placed to catch.
+- Not for: a value you have shown to be wrong; then `--force` and record why in the
+  provenance column.
+
+## Record where a value came from and what it cost
+
+The `provenance` column says how the value was obtained ({{#if modules.experiments}}an experiment run bundle `experiments/<slug>/runs/<ts>/`, {{/if}}a
+script and its version, a published table with page). For expensive values, also store the
+cost as its own quantity (here `cost_seconds` next to `chromatic_number`, for the same key), so
+a reuser can judge whether recomputing at a larger size is affordable.
+- Why: a value with no source cannot be re-checked, and a reuse that silently triggers a
+  much larger computation stalls the session.
+
+{{#if modules.experiments}}
+## Concurrent writers use their own table
+
+An experiment writes its values to `experiments/<slug>/results-catalog.tsv` instead of a
+shared table. Lookups take the union, so nothing is lost.
+- Why: two agents appending to one file at once can corrupt it or produce merge duplicates.
+- Duplicates across tables are harmless: lookups show each value once.
+
+{{/if}}
+## A cached value keeps its scope
+
+A cached value is only as strong as the computation behind it: a value computed to finite
+precision, or verified up to a bound, says so in its provenance. Reusing it does not make it
+exact.

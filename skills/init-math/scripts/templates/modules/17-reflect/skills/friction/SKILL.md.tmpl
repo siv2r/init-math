@@ -1,0 +1,44 @@
+---
+name: friction
+description: Log one line of workflow friction — something that went wrong, was repeated, rested on a wrong assumption, or wasted effort — so the next reflection pass can see it. Load it the moment you notice friction (your own or something the owner points out), or when the end-of-turn reminder asks.
+---
+
+# Log friction
+
+Run it at once, in the same turn you noticed the problem; no confirmation needed.
+
+```bash
+bin/journal --add friction "<what happened, in one line>" --kind <theme> [--source owner] [--now]
+```
+
+- **text**: what happened and what it cost, in plain words a stranger could follow
+  ("re-ran the full computation because the output path was reused and overwritten").
+- **--kind**: a short theme, reused across entries so they cluster: `tooling`,
+  `wrong-assumption`, `redundant-step`, `lost-work`, `unclear-doc`, `nudge-misfire`, …
+- **--source owner** when {{owner}} pointed it out (default: `agent`).
+- **--now** when it should be fixed soon rather than at the next periodic pass.
+
+When {{owner}} corrects *how* you work (not the mathematics), also record it as feedback:
+
+```bash
+bin/journal --add feedback "<the correction, in their words where possible>" --kind correction
+```
+
+(`--kind praise` when {{owner}} says something worked well; that is evidence too.)
+
+When {{owner}} corrects a *kind* of mathematical step (a step that fails in characteristic 2,
+a missed boundary case, a bound used outside its range), fix it in the research record and
+also log one line, so a pass can propose a scan or a reviewer instruction if the kind recurs:
+
+```bash
+bin/journal --add feedback "<the kind of slip, one line>" --kind math
+```
+
+Not for a one-off fact (a wrong value, a typo in a formula): that goes only in the record.
+
+Afterwards print only the confirmation line the command printed, and carry on with the task.
+
+**Not friction:** a research dead end (a false conjecture, a failed proof route) — that is
+a result for the research record. A failed research command is captured automatically by a
+hook; log it here only if you know something the log line does not (the cause, the cost).
+Longer reflections go to the journal: `bin/journal --add journal "<note>"`.

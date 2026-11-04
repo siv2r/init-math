@@ -1,0 +1,19 @@
+{
+  "cwd": "/tmp/proj",
+  "effort": {
+    "level": "medium"
+  },
+  "hook_event_name": "PreToolUse",
+  "permission_mode": "acceptEdits",
+  "prompt_id": "00000000-0000-0000-0000-000000000000",
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "tool_input": {
+    "description": "Review AGENTS.md first line",
+    "prompt": "Read the file /tmp/proj/AGENTS.md and report its first line as a one-line answer.",
+    "run_in_background": false,
+    "subagent_type": "probe-reviewer"
+  },
+  "tool_name": "Agent",
+  "tool_use_id": "toolu_01HXBBT2YNrA1w9aXsLJos5t",
+  "transcript_path": "/home/user/.claude/projects/-tmp-proj/00000000-0000-0000-0000-000000000000.jsonl"
+}

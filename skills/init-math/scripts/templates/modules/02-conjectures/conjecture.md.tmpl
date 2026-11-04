@@ -1,0 +1,43 @@
+---
+id: {{item.id}}
+status: open        # open | testing | weakly-supported | supported | refuted | proved | scope-tight
+questions: [{{#each item.questions}}{{.}}{{#if !@last}}, {{/if}}{{/each}}]
+{{#if item.tie}}
+question-tie: {{item.tie}}
+{{else}}
+question-tie: (not stated yet) what a verdict here would change in the question's answer
+{{/if}}
+{{#if item.family}}
+family: {{item.family}}
+{{else}}
+family: (not stated yet) the named family or range the statement is about
+{{/if}}
+credence:           # very unlikely | unlikely | even | likely | very likely (never certain), with date and reason; set by {{owner}}
+pursuit:            # why it is worth effort now, with date; set by {{owner}}
+# An agent may fill either with its proposal, ending `(proposed by an agent, <date>)`; {{owner}} confirms or changes it, removing the mark.
+# small-cases: not-informative   # optional; overrides [field_profile] in project.toml
+---
+# {{item.id}}: {{item.statement}}
+
+## Reading
+(Not stated yet: the other readings of this statement and its conventions, then the
+intended reading and why.)
+
+## Evidence
+
+(None yet. Add dated entries, newest last: what was checked, on which cases, with which
+tool and command, and the verdict, ending with `rivals:`, `differs-from-prior:`, `sign:`,
+`checked:` and `shares:` lines, `argued:` for an argued claim and `repair:` after a
+counterexample
+(`docs/discipline/conjecture-ledger.md`). A refuted conjecture keeps its entries and is never
+deleted.)
+
+## Next steps
+
+(None recorded yet. Put each next step on its own line starting `@residue:`, cheapest
+falsifier first. Keep the lines after the status settles: settled is not done.)
+{{#if modules.attempts}}
+
+## Attempts
+`bin/attempts --target {{item.id}}`
+{{/if}}

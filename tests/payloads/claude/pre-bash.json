@@ -1,0 +1,1 @@
+{"session_id":"s1","transcript_path":"/tmp/t.jsonl","cwd":"/tmp/proj","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf scratch","description":"remove","run_in_background":true}}

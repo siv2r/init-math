@@ -1,0 +1,22 @@
+[attempts]
+# Read by bin/attempts (see docs/discipline/attempt-loop.md).
+dir = "wiki/attempts"
+registry = "docs/principles.toml"
+# Set-aside, refuted or stepped-down lines on one target, since its last stall audit,
+# before bin/attempts prints AUDIT DUE.
+audit_after = 3
+# An active line is STALE once this many log entries have landed on other lines of the same
+# target since its own last entry.
+stale_after = 5
+# A line's default budget, in worker returns or sessions (never time); a record's `budget:`
+# overrides it. At the budget, bin/attempts prints BUDGET REACHED.
+budget_returns = 4
+# The move menu (bin/attempts --moves): each closed line that chose or credited a move adds
+# +1 (credited) or -move_miss_penalty (chosen, not credited), fading with a half-life of
+# move_half_life_closes closed lines. move_noise is the spread of the noise added on every
+# call, so early results barely move the order. construction_bonus is the head start of a
+# construction move when [field_profile] construction is true.
+move_noise = 1.0
+move_miss_penalty = 0.25
+move_half_life_closes = 20
+construction_bonus = 0.5

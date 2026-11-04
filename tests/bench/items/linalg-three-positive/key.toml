@@ -1,0 +1,12 @@
+kind = "flawed"
+error_class = "misapplied result: the two-factor lemma applied to a matrix that is similar to, but not, a symmetric positive definite one"
+location = "the step 'Now A' is similar to A ... A' is the positive definite operator A written in the basis formed by the columns of S ... Applying the lemma to the pair A', D'"
+catch = "says that A' = S^(-1) A S need not be symmetric (S is not orthogonal), so A' is not positive definite in the lemma's sense and the lemma does not apply to A'D; ideally gives a counterexample such as A = [[1,-1],[-1,2]], B = [[1,1],[1,2]], C = diag(3,1), for which ABC = [[0,-1],[3,3]] has the non-real eigenvalues (3 +- i sqrt 3)/2"
+audited = "2026-10-28, Claude Fable 5.1: ABC = [[0,-1],[3,3]] with char poly x^2 - 3x + 3 recomputed, A, B, C positive definite; second example has eigenvalue -1; S^-1 A S not symmetric is the only defect; Horn-Johnson 7.6 statement checked"
+# The statement is FALSE (the true neighbour is the two-factor lemma in cited.md).
+# Verified in Sage: A, B, C above are positive definite; ABC = [[0,-1],[3,3]] with
+# characteristic polynomial x^2 - 3x + 3 (discriminant -3). For this triple, BC = S D S^(-1)
+# with D = diag(4.3028.., 0.6972..) and S^(-1) A S = [[0.2519.., 0.5547..], [-0.5547.., 2.7481..]],
+# which is not symmetric. A negative-eigenvalue example also exists: A = [[1,-2],[-2,5]],
+# B = [[2,-1],[-1,1]], C = [[5,3],[3,2]] give ABC = [[11,6],[-24,-13]], eigenvalue -1 (double).
+# No 2x2 counterexample uses commuting or diagonal matrices, so a quick check by hand rarely finds one.

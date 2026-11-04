@@ -1,0 +1,18 @@
+id = "guard"
+number = 16
+title = "Safety guard"
+group = "D"
+status = "included"
+order = 160
+summary = "Refuses recursive deletes, force pushes to main, download-into-shell and agent-side gate bypasses; hands sudo and world-writable chmod to the owner; nudges on broad git add, in-place doc edits and cd drift."
+depends = []
+
+[[hooks]]
+script = "hooks/guard.py"
+event = "PreToolUse"
+actions = ["shell"]
+
+[[hooks]]
+script = "hooks/cd-drift-nudge.py"
+event = "PreToolUse"
+actions = ["shell"]

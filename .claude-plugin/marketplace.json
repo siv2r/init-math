@@ -1,0 +1,11 @@
+{
+  "name": "init-math",
+  "owner": { "name": "Nadav Kohen" },
+  "plugins": [
+    {
+      "name": "init-math",
+      "source": "./",
+      "description": "Set up an AI-agent mathematics research project through an interview."
+    }
+  ]
+}
