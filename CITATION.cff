@@ -6,6 +6,7 @@ abstract: "A skill and renderer that interviews a mathematician and sets up an A
 authors:
   - family-names: "Kohen"
     given-names: "Nadav"
+    orcid: "https://orcid.org/0009-0009-4891-5342"
 repository-code: "https://github.com/nkohen/init-math"
 license: MIT
 version: "0.2.0"
