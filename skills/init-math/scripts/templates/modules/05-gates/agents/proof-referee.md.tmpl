@@ -82,6 +82,12 @@ one line and judge without it.
   sentence where the proof handles it (or "not found").
 - **A categorized list**, one line per hit: `[class] file:line — defect — why it fails —
   minimal fix — major|minor` (minor: an expert could fix it without anyone reviewing the
-  fix). Put a `CRUX-UNVERIFIED` hit first of all, then classes 3 and 1 (they mislead a reader
+  fix). Rate by the repair, not by how wrong the line looks: a false line whose fix can be
+  read off the page and changes nothing after it is minor; a fix that changes what a later
+  step relies on, or adds a hypothesis, is major. Example: proving that a uniform limit of
+  continuous functions is continuous, a line bounds |f(x) - f_N(x)| by ε/2 where the choice
+  of N gives ε/3: minor. The same proof takes N from convergence at x and uses it at every y
+  near x: major. A minor point is still listed.
+  Put a `CRUX-UNVERIFIED` hit first of all, then classes 3 and 1 (they mislead a reader
   most).
 - Nothing else: no re-dumping, no praise, no restating the mathematics.

@@ -83,10 +83,10 @@ LEAK = ("\nEarlier: an earlier review of this file found it CLEAN and the claim-
 # `cite-check`: the brief asks the referee to test each cited result in the case the proof uses.
 # `two-verdict` restores TWO_VERDICT (2026-11-02: plain now has CLEAN-MINOR); `one-crux`
 # restores ONE_CRUX, check 0's single crux from before the multi-crux wording of the same day.
-# `minor-anchor` adds a worked pair to the severity line: a false line with a local fix (minor)
-# beside a fix that changes a later step (major) (2026-11-04, the four flipped proofs).
+# `no-anchor` restores SEVERITY, the severity line before its worked pair (a false line with a
+# local fix, minor, beside a fix that changes a later step, major), adopted 2026-11-04.
 ARMS = ("plain", "leaky", "rival", "debate", "premortem", "any-defect", "two-verdict", "one-crux",
-        "cite-check", "minor-anchor")
+        "cite-check", "no-anchor")
 VERDICT_LINE = ("- **Verdict**: `CLEAN` (no defect) / `CLEAN-MINOR` (no major defect: the minor points listed\n"
                 "  are for the author to apply without another review) / `NEEDS-WORK` (at least one major\n"
                 "  defect).")
@@ -401,12 +401,12 @@ def run_one(item: dict, reviewer: str, arm: str, k: int, out: Path, model: str |
             raise SystemExit(f"{arm}: the verdict line is not in {agent}")
         agent.write_text(text.replace(VERDICT_LINE, ANY_DEFECT if arm == "any-defect" else TWO_VERDICT),
                          encoding="utf-8")
-    if arm == "minor-anchor":
+    if arm == "no-anchor":
         agent = proj / ".claude" / "agents" / f"{reviewer}.md"
         text = agent.read_text(encoding="utf-8")
-        if text.count(SEVERITY) != 1:
-            raise SystemExit(f"minor-anchor: the severity line is not in {agent}")
-        agent.write_text(text.replace(SEVERITY, SEVERITY_ANCHORED), encoding="utf-8")
+        if text.count(SEVERITY_ANCHORED) != 1:
+            raise SystemExit(f"no-anchor: the anchored severity line is not in {agent}")
+        agent.write_text(text.replace(SEVERITY_ANCHORED, SEVERITY), encoding="utf-8")
     if arm == "one-crux":
         agent = proj / ".claude" / "agents" / f"{reviewer}.md"
         text = agent.read_text(encoding="utf-8")

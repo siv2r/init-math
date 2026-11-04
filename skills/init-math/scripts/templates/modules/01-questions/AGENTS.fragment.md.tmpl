@@ -10,8 +10,9 @@
   on their word ([question-ties.md](docs/discipline/question-ties.md)).
 - Before you dispatch or start a task, its brief carries a `## Question tie` block: which
   answer shape it moves, and what each outcome (including failure) would change. "Related
-  to the question" is not a tie; a transfer needs a mechanism.
+  to the question" is not a tie; a transfer needs a mechanism. Literature searches, scouts
+  and reviews need none, even on a `proposed` question.
 - Lint it with `bin/tie-check`; above a smoke test, have the `tie-auditor` agent read it and
   proceed only on `TIED` or {{owner}}'s override. A capped exploration (`kind: explore`) needs
-  the lint only. Why and how: [docs/discipline/question-ties.md](docs/discipline/question-ties.md).
+  the lint only.
 {{/if}}
