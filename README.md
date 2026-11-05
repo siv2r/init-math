@@ -1,5 +1,7 @@
 # init-math
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23973379.svg)](https://doi.org/10.5281/zenodo.23973379)
+
 Set up a mathematics research project worked on by AI agents, through a short interview.
 
 init-math asks about your field, how you work (proofs on paper, computing examples,
@@ -70,7 +72,10 @@ Nadav directly, as before.
 If init-math helped your work, please cite it ("Cite this repository" on GitHub, from
 [CITATION.cff](CITATION.cff)):
 
-> Nadav Kohen, *init-math*, version 0.2.0, https://github.com/nkohen/init-math
+> Nadav Kohen, *init-math*, version 0.2.0, https://doi.org/10.5281/zenodo.23973379
+
+That DOI covers every release and resolves to the latest; version 0.2.0 on its own is
+https://doi.org/10.5281/zenodo.23973380.
 
 MIT-licensed ([LICENSE](LICENSE)). Projects it generates are yours: the files it writes into
 them carry no license notice and no obligation.
